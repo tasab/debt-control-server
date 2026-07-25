@@ -18,6 +18,17 @@ npm run dev               # http://localhost:3001
 Seeded logins (password `password123`):
 `investor@debt.local`, `business@debt.local`, `admin@debt.local`.
 
+## Typecheck
+
+```bash
+npm run typecheck
+```
+
+The server is TypeScript with **no build step**: Node 24 runs `.ts` files by
+stripping the types. That is why `tsconfig.json` sets `erasableSyntaxOnly` —
+enums, namespaces and parameter properties would need emitting, so tsc refuses
+them here. Relative imports point at `.ts` for the same reason.
+
 ## Test
 
 ```bash
@@ -34,6 +45,7 @@ always 10000, and a repayment splits to the kopiyka.
 
 ```
 src/
+  types.ts    Money, ledger entries, Db/Tx, Fastify decorators
   money/      amount · ledger · balances · fees · valuation   ← all money logic
   fx/         providers/ · service (quote-lock) · job
   domain/     auth · transfers · businesses · requests · loans · stats · scoring

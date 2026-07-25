@@ -4,14 +4,15 @@
   "version": "0.0.0",
   "type": "module",
   "scripts": {
-    "dev": "node --watch src/index.js",
-    "start": "node src/index.js",
-    "seed": "node db/seeds/seed.js",
+    "dev": "node --watch src/index.ts",
+    "start": "node src/index.ts",
+    "seed": "node db/seeds/seed.ts",
     "db:generate": "drizzle-kit generate",
-    "db:migrate": "node db/migrate.js",
+    "db:migrate": "node db/migrate.ts",
     "db:studio": "drizzle-kit studio",
-    "test": "node --test --test-concurrency=1 test/*.test.js",
-    "db:reset": "node db/migrate.js && node db/seeds/seed.js"
+    "test": "node --test --test-concurrency=1 test/*.test.ts",
+    "db:reset": "node db/migrate.ts && node db/seeds/seed.ts",
+    "typecheck": "tsc --noEmit"
   },
   "dependencies": {
     "@fastify/cookie": "^11.1.2",
@@ -28,6 +29,9 @@
     "zod": "^4.4.3"
   },
   "devDependencies": {
-    "drizzle-kit": "^0.31.0"
+    "@types/node": "^26.1.1",
+    "@types/pg": "^8.20.0",
+    "drizzle-kit": "^0.31.0",
+    "typescript": "^7.0.2"
   }
 }
