@@ -1,49 +1,95 @@
-import Fastify from 'fastify'
-import cors from '@fastify/cors'
-import fastifyStatic from '@fastify/static'
 import { existsSync } from 'node:fs'
 import { dirname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
-import snapshotRoutes from './routes/snapshots.js'
-import peopleRoutes from './routes/people.js'
-import auditRoutes from './routes/audit.js'
-import currencyRoutes from './routes/currencies.js'
+import Fastify from 'fastify'
+import cors from '@fastify/cors'
+import fastifyStatic from '@fastify/static'
+import rateLimit from '@fastify/rate-limit'
+import { assertConfig, config } from './config.js'
+import errorsPlugin from './plugins/errors.js'
+import authPlugin from './plugins/auth.js'
+import authRoutes from './routes/auth.js'
+import walletRoutes from './routes/wallets.js'
+import transferRoutes from './routes/transfers.js'
+import fxRoutes from './routes/fx.js'
+import businessRoutes from './routes/businesses.js'
+import requestRoutes from './routes/requests.js'
+import loanRoutes from './routes/loans.js'
+import statsRoutes from './routes/stats.js'
+import { startJobs } from './jobs/index.js'
 
-const PORT = Number(process.env.PORT ?? 3001)
-const HOST = process.env.HOST ?? '0.0.0.0'
+assertConfig()
 
-const fastify = Fastify({ logger: true })
+export async function buildServer({ logger = true } = {}) {
+  const fastify = Fastify({ logger, trustProxy: true })
 
-// Allow the Vite dev client to call the API cross-origin.
-await fastify.register(cors, { origin: true })
+  await fastify.register(cors, { origin: true, credentials: true })
+  await fastify.register(rateLimit, {
+    global: false,
+    max: 100,
+    timeWindow: '1 minute',
+    keyGenerator: (request) => request.user?.id ?? request.ip,
+  })
+  await fastify.register(errorsPlugin)
+  await fastify.register(authPlugin)
 
-fastify.get('/health', async () => ({ status: 'ok' }))
+  fastify.get('/health', async () => ({ status: 'ok' }))
 
-await fastify.register(snapshotRoutes, { prefix: '/api' })
-await fastify.register(peopleRoutes, { prefix: '/api' })
-await fastify.register(auditRoutes, { prefix: '/api' })
-await fastify.register(currencyRoutes, { prefix: '/api' })
+  // Auth endpoints are the ones worth brute-forcing, so they get their own,
+  // tighter bucket (PLATFORM_PLAN §8).
+  await fastify.register(
+    async (scope) => {
+      await scope.register(rateLimit, { max: 20, timeWindow: '1 minute' })
+      await scope.register(authRoutes)
+    },
+    { prefix: '/api' },
+  )
 
-// In production, serve the built client from the same origin (no CORS/proxy).
-// Run `npm run build` (client) first; if dist/ is absent (dev), this is skipped.
-const __dirname = dirname(fileURLToPath(import.meta.url))
-const CLIENT_DIST = resolve(__dirname, '../../client/dist')
-if (existsSync(join(CLIENT_DIST, 'index.html'))) {
-  await fastify.register(fastifyStatic, { root: CLIENT_DIST })
-  // SPA fallback: send index.html for any non-API, non-file route so client-side
-  // routing (React Router) works on refresh/deep-link.
+  await fastify.register(
+    async (scope) => {
+      await scope.register(walletRoutes)
+      await scope.register(transferRoutes)
+      await scope.register(fxRoutes)
+      await scope.register(businessRoutes)
+      await scope.register(requestRoutes)
+      await scope.register(loanRoutes)
+      await scope.register(statsRoutes)
+    },
+    { prefix: '/api' },
+  )
+
+  // In production the built client is served from the same origin (no CORS, no
+  // proxy). Skipped in dev, where Vite serves it.
+  const here = dirname(fileURLToPath(import.meta.url))
+  const clientDist = resolve(here, '../../client/dist')
+  const hasClient = existsSync(join(clientDist, 'index.html'))
+  if (hasClient) {
+    await fastify.register(fastifyStatic, { root: clientDist })
+    fastify.log.info(`Serving client from ${clientDist}`)
+  }
+
+  // One 404 handler for the whole app: JSON under /api, SPA fallback elsewhere
+  // so a deep link still loads the client and React Router takes over.
   fastify.setNotFoundHandler((request, reply) => {
-    if (request.raw.url?.startsWith('/api')) {
-      return reply.code(404).send({ message: 'Not found' })
+    if (!hasClient || request.raw.url?.startsWith('/api')) {
+      return reply
+        .code(404)
+        .send({ error: { code: 'NOT_FOUND', message: 'Не знайдено', fields: null } })
     }
     return reply.sendFile('index.html')
   })
-  fastify.log.info(`Serving client from ${CLIENT_DIST}`)
+
+  return fastify
 }
 
-try {
-  await fastify.listen({ port: PORT, host: HOST })
-} catch (err) {
-  fastify.log.error(err)
-  process.exit(1)
+// `node src/index.js` starts the server; importing this module (tests) does not.
+if (process.argv[1] && fileURLToPath(import.meta.url) === resolve(process.argv[1])) {
+  const fastify = await buildServer()
+  try {
+    await fastify.listen({ port: config.port, host: config.host })
+    if (config.jobs.enabled) startJobs(fastify.log)
+  } catch (err) {
+    fastify.log.error(err)
+    process.exit(1)
+  }
 }
