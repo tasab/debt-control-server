@@ -30,7 +30,11 @@ export default async function authRoutes(fastify) {
     reply.setCookie(SESSION_COOKIE, token, cookieOptions)
   }
 
-  fastify.post('/auth/register', async (request, reply) => {
+  // Guessing a password is the attack worth slowing down; every other route in
+  // this file rides the app-wide limit (PLATFORM_PLAN §8).
+  const bruteForceLimit = { config: { rateLimit: { max: 20, timeWindow: '1 minute' } } }
+
+  fastify.post('/auth/register', bruteForceLimit, async (request, reply) => {
     const body = registerSchema.parse(request.body)
     const user = await auth.register(body, context(request))
     const session = await auth.createSession(user.id, context(request))
@@ -38,7 +42,7 @@ export default async function authRoutes(fastify) {
     return reply.code(201).send(await mePayload(user))
   })
 
-  fastify.post('/auth/login', async (request, reply) => {
+  fastify.post('/auth/login', bruteForceLimit, async (request, reply) => {
     const body = loginSchema.parse(request.body)
     const { user, session } = await auth.login(body, context(request))
     setSession(reply, user, session)

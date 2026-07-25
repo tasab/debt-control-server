@@ -35,18 +35,13 @@ export async function buildServer({ logger = true } = {}) {
 
   fastify.get('/health', async () => ({ status: 'ok' }))
 
-  // Auth endpoints are the ones worth brute-forcing, so they get their own,
-  // tighter bucket (PLATFORM_PLAN §8).
+  // The tight bucket belongs on the brute-forceable endpoints only (login and
+  // register — see routes/auth.js), not on the whole auth prefix: `/auth/me`
+  // runs on every page load, and sharing a 20/min bucket with it locked people
+  // out of logging in.
   await fastify.register(
     async (scope) => {
-      await scope.register(rateLimit, { max: 20, timeWindow: '1 minute' })
       await scope.register(authRoutes)
-    },
-    { prefix: '/api' },
-  )
-
-  await fastify.register(
-    async (scope) => {
       await scope.register(walletRoutes)
       await scope.register(transferRoutes)
       await scope.register(fxRoutes)

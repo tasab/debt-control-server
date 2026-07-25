@@ -5,8 +5,9 @@ export const createRequestSchema = z.object({
   currency: currencyCode,
   amountTarget: amountString,
   // Basis points: 1800 = 18% annual. One format everywhere, so requests are
-  // comparable (§6.4).
-  rateAnnualBps: z.coerce.number().int().min(1).max(20000),
+  // comparable (§6.4). Zero is valid — an interest-free request is a real thing
+  // (a favour, a related party), and the schedule handles it without a branch.
+  rateAnnualBps: z.coerce.number().int().min(0).max(20000),
   termDays: z.coerce.number().int().min(7).max(3650),
   repaymentType: z.enum(['bullet', 'interest_only_flex']),
   minTicket: amountString.optional(),
