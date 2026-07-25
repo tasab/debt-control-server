@@ -1,0 +1,24 @@
+# Local Postgres for development. Spin up with `docker compose up -d`.
+# Connection string matches server/.env.example (DATABASE_URL).
+services:
+  db:
+    image: postgres:16-alpine
+    container_name: debt-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: debt
+      POSTGRES_PASSWORD: debt
+      POSTGRES_DB: debt
+    ports:
+      # Host 5433 to avoid clashing with any Postgres already on 5432.
+      - "5433:5432"
+    volumes:
+      - debt_pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U debt -d debt"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+volumes:
+  debt_pgdata:
