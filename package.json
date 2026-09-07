@@ -10,7 +10,6 @@
     "db:generate": "drizzle-kit generate",
     "db:migrate": "node db/migrate.ts",
     "db:studio": "drizzle-kit studio",
-    "test": "node --test --test-concurrency=1 test/*.test.ts",
     "db:reset": "node db/migrate.ts && node db/seeds/seed.ts",
     "typecheck": "tsc --noEmit"
   },

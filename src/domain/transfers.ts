@@ -6,6 +6,7 @@ import { newId, parseAmount } from '../money/amount.ts'
 import { postTransaction } from '../money/ledger.ts'
 import { externalAccount, platformFee, userWallet } from '../money/accounts.ts'
 import { previewFee } from '../money/fees.ts'
+import { sweepIntoBusiness } from './members.ts'
 import type { LedgerEntryInput, Money, RequestContext } from '../types.ts'
 
 /**
@@ -110,6 +111,10 @@ export async function transfer(
         ip: context.ip ?? null,
         userAgent: context.userAgent ?? null,
       })
+
+      // Отримувач може бути учасником бізнесу — тоді переказані кошти не
+      // осідають на його гаманці, а йдуть у бізнес, як і будь-які інші.
+      await sweepIntoBusiness(tx, toUserId, fromUserId, 'Переказ від іншого користувача')
     }
     return posted
   })
@@ -175,6 +180,11 @@ export async function topUp({
         entityId: posted.transactionId,
         data: { userId, currency, amount: value.toString() },
       })
+
+      // Кошти учасника працюють у бізнесі — тож поповнення не осідає на
+      // гаманці, а йде туди ж, куди пішов би вступний внесок. У тій самій
+      // транзакції: стану «поповнили, але ще не передали» не існує.
+      await sweepIntoBusiness(tx, userId, adminId)
     }
     return posted
   })

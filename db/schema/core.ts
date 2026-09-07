@@ -51,6 +51,11 @@ export const users = pgTable(
 // One row per login. The cookie carries a JWT whose `sid` points here, so a
 // session can be revoked server-side (logout, rotation) without waiting for the
 // JWT to expire.
+//
+// `expires_at` = NULL означає «не спливає за часом». Це стан за замовчуванням:
+// вихід із додатка має бути рішенням людини, а не наслідком того, що вона
+// тиждень не заходила. Відкликання нікуди не поділося — `revoked_at` гасить
+// сесію миттєво, і саме воно, а не годинник, лишається запобіжником.
 export const sessions = pgTable(
   'sessions',
   {
@@ -58,7 +63,7 @@ export const sessions = pgTable(
     userId: text('user_id')
       .notNull()
       .references(() => users.id),
-    expiresAt: timestamp('expires_at', { withTimezone: true }).notNull(),
+    expiresAt: timestamp('expires_at', { withTimezone: true }),
     revokedAt: timestamp('revoked_at', { withTimezone: true }),
     rotatedTo: text('rotated_to'),
     ip: text('ip'),
@@ -68,11 +73,41 @@ export const sessions = pgTable(
   (t) => [index('idx_sessions_user').on(t.userId)],
 )
 
+// ─── Публічні посилання на баланс ───────────────────────────────────────────
+// Одне посилання — один рядок із власним токеном. Не одне поле в `users`, бо
+// посилань буває кілька (одне бухгалтеру, одне партнеру), і відкликати треба
+// вміти кожне окремо, не ламаючи решту.
+//
+// Відкликання — це `revoked_at`, а не DELETE: коли посилання раптом «перестало
+// працювати», відповідь «його відкликали такого-то числа» краща за порожнечу.
+export const balanceShares = pgTable(
+  'balance_shares',
+  {
+    id: text('id').primaryKey(),
+    userId: text('user_id')
+      .notNull()
+      .references(() => users.id),
+    // 128 біт випадковості в base64url. Токен — єдине, що захищає сторінку,
+    // тож він має бути незгадуваним, а не коротким.
+    token: text('token').notNull(),
+    // Підпис для себе: «для банку», «Петрові». Хто відкриє посилання, його не
+    // бачить — це нотатка власника, а не заголовок сторінки.
+    label: text('label'),
+    viewCount: integer('view_count').notNull().default(0),
+    lastViewedAt: timestamp('last_viewed_at', { withTimezone: true }),
+    revokedAt: timestamp('revoked_at', { withTimezone: true }),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    uniqueIndex('idx_balance_shares_token').on(t.token),
+    index('idx_balance_shares_user').on(t.userId),
+  ],
+)
+
 // ─── Ledger (PLATFORM_PLAN §2.1) ────────────────────────────────────────────
-// kinds: user_wallet | user_hold | business_register | loan_principal
-//        platform_fee | platform_fx | external
-// ownerType/ownerId say whose account it is: ('user', usr_…),
-// ('business', biz_…), ('loan', loan_…) or ('platform', 'platform').
+// Повний перелік видів — у src/types.ts (AccountKind); ownerType/ownerId
+// кажуть, чий це рахунок: ('user', usr_…), ('business', biz_…),
+// ('membership', mem_…) або ('platform', 'platform').
 export const accounts = pgTable(
   'accounts',
   {
@@ -130,8 +165,8 @@ export const transactions = pgTable(
 )
 
 // Immutable. Reversal is a compensating transaction, never a DELETE.
-// `comment` / `counterpartyId` / `relatedLoanId` are denormalised so rendering
-// a history page is one indexed read, not a join across five tables.
+// `comment` / `counterpartyId` are denormalised so rendering a history page is
+// one indexed read, not a join across several tables.
 export const ledgerEntries = pgTable(
   'ledger_entries',
   {
@@ -147,7 +182,6 @@ export const ledgerEntries = pgTable(
     entryType: text('entry_type'),
     comment: text('comment'),
     counterpartyId: text('counterparty_id'),
-    relatedLoanId: text('related_loan_id'),
     createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
   },
   (t) => [

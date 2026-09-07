@@ -1,45 +1,53 @@
 import 'dotenv/config'
 import { hash } from '@node-rs/argon2'
-import { eq, sql } from 'drizzle-orm'
+import { sql } from 'drizzle-orm'
 import { db, pool } from '../../src/db/index.ts'
-import {
-  businesses,
-  currencies,
-  feePolicies,
-  rateSources,
-  startingCapital,
-  users,
-} from '../schema/index.ts'
+import { currencies, feePolicies, rateSources, users } from '../schema/index.ts'
 import { config } from '../../src/config.ts'
 import { newId } from '../../src/money/amount.ts'
 import { userWallet } from '../../src/money/accounts.ts'
-import { topUp } from '../../src/domain/transfers.ts'
 import { refreshRates } from '../../src/fx/job.ts'
 
-// A demo world you can log into: investor, business owner, admin (§10 Ф0).
-// Re-runnable — every insert is upsert-shaped, so seeding twice is harmless.
+/**
+ * Мінімум, без якого база не працює, — і жодного демо-світу.
+ *
+ * Тут навмисно немає ані вигаданих користувачів із балансами, ані кав’ярні з
+ * касами: сід ставить довідники (валюти, джерела курсів, тарифи) і один
+ * адмінський акаунт, з якого можна увійти. Усе інше — справжні дані, які
+ * заводить людина.
+ *
+ * Гроші в системі з’являються лише через поповнення адміністратором (D1), тож
+ * адмін тут не зручність, а єдиний спосіб узагалі почати: зареєстрований
+ * самотужки користувач такого права не має.
+ *
+ * Прогін безпечний повторно: усі вставки — upsert, і другий запуск лише
+ * приводить довідники та адміна до описаного тут стану.
+ */
+
+// Порядок — за частотою: гривня, три ходові валюти, далі решта. Він задає
+// порядок у кожному списку валют, тож USD/EUR/PLN завжди під рукою.
 const CURRENCIES = [
   { code: 'UAH', name: 'Гривня', exponent: 2, isBase: true, sortOrder: 0 },
   { code: 'USD', name: 'Долар США', exponent: 2, sortOrder: 1 },
   { code: 'EUR', name: 'Євро', exponent: 2, sortOrder: 2 },
-  { code: 'GBP', name: 'Фунт стерлінгів', exponent: 2, sortOrder: 3 },
-  { code: 'PLN', name: 'Злотий', exponent: 2, sortOrder: 4 },
+  { code: 'PLN', name: 'Злотий', exponent: 2, sortOrder: 3 },
+  { code: 'GBP', name: 'Фунт стерлінгів', exponent: 2, sortOrder: 4 },
+  { code: 'CHF', name: 'Швейцарський франк', exponent: 2, sortOrder: 5 },
+  { code: 'CAD', name: 'Канадський долар', exponent: 2, sortOrder: 6 },
+  { code: 'CZK', name: 'Чеська крона', exponent: 2, sortOrder: 7 },
+  { code: 'SEK', name: 'Шведська крона', exponent: 2, sortOrder: 8 },
 ]
 
-type SeedPerson = {
-  email: string
-  displayName: string
-  capabilities: string[]
-  isAdmin?: boolean
+// Пошта зберігається в нижньому регістрі: domain/auth.ts нормалізує ввід через
+// toLowerCase() і шукає користувача саме так. Запис «Admin@gmail.com» як є
+// створив би акаунт, у який неможливо увійти.
+const ADMIN = {
+  email: 'admin@gmail.com',
+  displayName: 'Admin',
+  capabilities: ['invest', 'borrow'],
+  isAdmin: true,
+  password: process.env.SEED_ADMIN_PASSWORD ?? 'Admin123',
 }
-
-const PEOPLE: SeedPerson[] = [
-  { email: 'investor@debt.local', displayName: 'Олекса Інвестор', capabilities: ['invest'] },
-  { email: 'business@debt.local', displayName: 'Марія Підприємець', capabilities: ['borrow'] },
-  { email: 'admin@debt.local', displayName: 'Адміністратор', capabilities: ['invest', 'borrow'], isAdmin: true },
-]
-
-const PASSWORD = 'password123'
 
 async function main() {
   await db
@@ -50,13 +58,18 @@ async function main() {
       set: { name: sql`excluded.name`, exponent: sql`excluded.exponent` },
     })
 
+  // `external` is the live feed and the default source, so it must be active
+  // after a seed — otherwise the first refresh has no row to attach rates to.
   await db
     .insert(rateSources)
     .values([
-      { id: 'hardcoded', name: 'Hardcoded (Ф2)', priority: 100 },
-      { id: 'external', name: 'External API (Ф7)', priority: 10, isActive: false },
+      { id: 'external', name: 'Rate aggregator (Ф7)', priority: 10, isActive: true },
+      { id: 'hardcoded', name: 'Hardcoded fallback (Ф2)', priority: 100, isActive: false },
     ])
-    .onConflictDoNothing()
+    .onConflictDoUpdate({
+      target: rateSources.id,
+      set: { name: sql`excluded.name`, isActive: sql`excluded.is_active` },
+    })
 
   // Fee policies (D3). Dated from now — changing a tariff later inserts a new
   // row instead of editing this one.
@@ -89,82 +102,30 @@ async function main() {
     ])
     .onConflictDoNothing()
 
-  const passwordHash = await hash(PASSWORD)
-  const created: Record<string, typeof users.$inferSelect> = {}
-  for (const person of PEOPLE) {
-    const [existing] = await db.select().from(users).where(eq(users.email, person.email)).limit(1)
-    if (existing) {
-      created[person.email] = existing
-      continue
-    }
-    const [user] = await db
-      .insert(users)
-      .values({ id: newId('usr'), passwordHash, ...person })
-      .returning()
-    created[person.email] = user!
-    for (const currency of CURRENCIES) await userWallet(user.id, currency.code)
-  }
-
-  const admin = created['admin@debt.local']!
-  const investor = created['investor@debt.local']!
-  const owner = created['business@debt.local']!
-
-  // Business profile with a dated starting capital — the P&L baseline.
-  const [existingBusiness] = await db
-    .select()
-    .from(businesses)
-    .where(eq(businesses.ownerUserId, owner.id))
-    .limit(1)
-  if (!existingBusiness) {
-    const [business] = await db
-      .insert(businesses)
-      .values({
-        id: newId('biz'),
-        ownerUserId: owner.id,
-        name: 'Кав’ярня «Друга Хвиля»',
-        description: 'Дві точки в центрі, обіг ~180 тис. грн/міс.',
-        baseCurrency: 'UAH',
-        isVerified: true,
-      })
-      .returning()
-    await db.insert(startingCapital).values({
-      id: newId('cap'),
-      businessId: business.id,
-      amount: 50_000_00n,
-      currency: 'UAH',
+  const { password, ...person } = ADMIN
+  const passwordHash = await hash(password)
+  const [admin] = await db
+    .insert(users)
+    .values({ id: newId('usr'), passwordHash, ...person })
+    .onConflictDoUpdate({
+      target: users.email,
+      set: {
+        passwordHash,
+        displayName: person.displayName,
+        capabilities: person.capabilities,
+        isAdmin: true,
+        deletedAt: null,
+      },
     })
-  }
+    .returning()
 
-  // Money enters only through an admin top-up, even in the seed (D1).
-  await topUp({
-    adminId: admin.id,
-    userId: investor.id,
-    currency: 'UAH',
-    amount: '50000000',
-    comment: 'демо-поповнення',
-    idempotencyKey: 'seed-topup-investor-uah',
-  })
-  await topUp({
-    adminId: admin.id,
-    userId: investor.id,
-    currency: 'USD',
-    amount: '500000',
-    comment: 'демо-поповнення',
-    idempotencyKey: 'seed-topup-investor-usd',
-  })
-  await topUp({
-    adminId: admin.id,
-    userId: owner.id,
-    currency: 'UAH',
-    amount: '10000000',
-    comment: 'демо-поповнення',
-    idempotencyKey: 'seed-topup-business-uah',
-  })
+  // Рахунки під кожну валюту заводяться одразу: інакше перше поповнення
+  // впиралося б у відсутній рахунок замість того, щоб просто пройти.
+  for (const currency of CURRENCIES) await userWallet(admin!.id, currency.code)
 
   await refreshRates(console)
 
-  console.log('Seeded. Log in with any of:')
-  for (const person of PEOPLE) console.log(`  ${person.email} / ${PASSWORD}`)
+  console.log(`Seeded. Log in as ${ADMIN.email} / ${password} (адмін)`)
 }
 
 await main()

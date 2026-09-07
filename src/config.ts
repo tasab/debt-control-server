@@ -12,7 +12,10 @@ export const config = {
   // Dev default keeps `npm run dev` working after a fresh clone; production
   // refuses to start without a real secret (see assertConfig below).
   jwtSecret: process.env.JWT_SECRET ?? 'dev-only-insecure-secret-change-me',
-  sessionTtlDays: int(process.env.SESSION_TTL_DAYS, 30),
+  // 0 — сесія не спливає за часом узагалі. Розлогінити може лише сама людина
+  // («Вийти»), ротація або адміністратор: час перестав бути причиною.
+  // SESSION_TTL_DAYS=30 повертає старий строк, якщо колись знадобиться.
+  sessionTtlDays: int(process.env.SESSION_TTL_DAYS, 0),
 
   baseCurrency: process.env.BASE_CURRENCY ?? 'UAH',
 
@@ -27,7 +30,12 @@ export const config = {
   },
 
   fx: {
-    source: process.env.RATE_SOURCE ?? 'hardcoded',
+    // Курси беруться з живого агрегатора; RATE_SOURCE=hardcoded лишається
+    // тільки для офлайн-демо і тестів.
+    source: process.env.RATE_SOURCE ?? 'external',
+    apiUrl:
+      process.env.RATE_API_URL ??
+      'https://rate-agg-server-production.up.railway.app/share/8?rateType=SOURCE_RATE',
     quoteTtlSeconds: int(process.env.FX_QUOTE_TTL_SECONDS, 60),
     staleAfterMinutes: int(process.env.FX_STALE_AFTER_MINUTES, 120),
     refreshIntervalMinutes: int(process.env.FX_REFRESH_MINUTES, 15),

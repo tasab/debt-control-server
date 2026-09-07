@@ -100,11 +100,23 @@ export async function login(
   return { user, session }
 }
 
+/**
+ * Коли сесія спливає — або не спливає ніколи.
+ *
+ * `sessionTtlDays: 0` дає NULL, і перевірка часу в resolveUser просто не
+ * спрацьовує. Одне місце на весь код, щоб «вічність» не розповзлася по трьох
+ * різних формулах.
+ */
+const sessionExpiry = () =>
+  config.sessionTtlDays > 0
+    ? new Date(Date.now() + config.sessionTtlDays * 24 * 60 * 60 * 1000)
+    : null
+
 export async function createSession(
   userId: string,
   context: RequestContext = {},
 ): Promise<Session> {
-  const expiresAt = new Date(Date.now() + config.sessionTtlDays * 24 * 60 * 60 * 1000)
+  const expiresAt = sessionExpiry()
   const [session] = await db
     .insert(sessions)
     .values({
@@ -134,7 +146,7 @@ export async function rotateSession(
       .limit(1)
     if (!current) throw errors.unauthorized()
 
-    const expiresAt = new Date(Date.now() + config.sessionTtlDays * 24 * 60 * 60 * 1000)
+    const expiresAt = sessionExpiry()
     const [next] = await tx
       .insert(sessions)
       .values({

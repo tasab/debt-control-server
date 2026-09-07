@@ -92,7 +92,7 @@ export function splitProportionally(total: Money, weights: Array<number | bigint
   return parts
 }
 
-/** Prefixed, sortable-enough ids: usr_…, txn_…, loan_… */
+/** Prefixed, sortable-enough ids: usr_…, txn_…, shr_… */
 export function newId(prefix: string): string {
   return `${prefix}_${randomUUID().replace(/-/g, '').slice(0, 24)}`
 }

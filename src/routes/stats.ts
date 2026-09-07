@@ -1,5 +1,5 @@
 import { z } from 'zod'
-import { balanceHistory, exportCsv, portfolio, summary } from '../domain/stats.ts'
+import { balanceHistory, exportCsv, summary } from '../domain/stats.ts'
 import { currencyCode } from '../validation/common.ts'
 import { money } from '../serialize.ts'
 import type { FastifyInstance } from 'fastify'
@@ -29,36 +29,9 @@ export default async function statsRoutes(fastify: FastifyInstance) {
     return {
       baseCurrency: data.baseCurrency,
       wallets: money(data.wallets),
-      held: money(data.held),
-      lent: money(data.lent),
-      accrued: money(data.accrued),
-      overdue: money(data.overdue),
+      invested: money(data.invested),
       borrowed: money(data.borrowed),
       netWorth: money(data.netWorth),
-    }
-  })
-
-  fastify.get('/portfolio', { preHandler: fastify.guard(['invest']) }, async (request) => {
-    const data = await portfolio(request.user.id)
-    return {
-      baseCurrency: data.baseCurrency,
-      activePrincipal: money(data.activePrincipal),
-      totalDeployed: money(data.totalDeployed),
-      interestReceived: money(data.interestReceived),
-      feesPaid: money(data.feesPaid),
-      principalReturned: money(data.principalReturned),
-      netInterest: money(data.netInterest),
-      weightedRateBps: data.weightedRateBps,
-      positionCount: data.positionCount,
-      overdueCount: data.overdueCount,
-      defaultedCount: data.defaultedCount,
-      distribution: data.distribution.map((row) => ({
-        businessId: row.id,
-        name: row.name,
-        amount: money(row.amount),
-        shareBps: row.shareBps,
-      })),
-      concentrationWarning: data.concentrationWarning,
     }
   })
 

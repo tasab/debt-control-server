@@ -19,12 +19,32 @@ export type AccountKind =
   | 'user_wallet'
   | 'user_hold'
   | 'business_register'
-  | 'loan_principal'
+  // Готівка бізнесу поза касами, по одному рахунку на валюту — те, що
+  // власник перераховує ввечері разом із касами.
+  | 'business_cash'
+  // Дві половини P&L. Виторг накопичується від'ємним, витрати додатним, і
+  // разом вони — друга сторона кожного коригування при перерахунку.
+  | 'business_income'
+  | 'business_expense'
+  // Вилучення власником. Не витрата: гроші не втрачені, вони роздані. Тому
+  // цей рахунок стоїть окремо й на прибуток не впливає — інакше «забрав
+  // зароблене» читалося б як «не заробив».
+  | 'business_draw'
+  // Власні гроші, вкладені власником у бізнес. Не виторг: бізнес їх не
+  // заробив, їх принесли. І не борг перед учасником: винен самому собі не
+  // буваєш. Це третя річ — власний капітал, і без окремого рахунку він
+  // неминуче потрапляв би у прибуток.
+  | 'business_capital'
+  // Борг бізнесу перед учасником. Єдиний вид рахунку, який ніколи не буває
+  // додатним: це зобов'язання, і воно живе з протилежним знаком до активів.
+  | 'member_claim'
   | 'platform_fee'
   | 'platform_fx'
   | 'external'
 
-export type OwnerType = 'user' | 'business' | 'loan' | 'platform'
+// 'membership' — рахунок належить не людині взагалі, а її участі в конкретному
+// бізнесі: та сама людина може вкластися у два бізнеси, і це два різні борги.
+export type OwnerType = 'user' | 'business' | 'platform' | 'membership'
 
 export type EntryType =
   | 'transfer_out'
@@ -32,19 +52,40 @@ export type EntryType =
   | 'fx'
   | 'fee'
   | 'topup'
-  | 'funding_hold'
-  | 'funding_release'
-  | 'disbursement'
-  | 'repayment_in'
-  | 'repayment_out'
   | 'interest_accrued'
+  // Admin correction of a participant's wallet — balanced against `external`,
+  // like a top-up, because a balance is a ledger sum and never a field.
+  | 'adjustment'
   | 'internal_in'
   | 'internal_out'
+  // Вечірній перерахунок: різниця між порахованим і тим, що каже книга.
+  // Надлишок — виторг дня, нестача — витрата.
+  | 'count_adjustment'
+  | 'count_surplus'
+  | 'count_shortfall'
+  // Названі рухи грошей з каси: витрата з причиною і вилучення прибутку.
+  | 'expense'
+  | 'draw'
+  | 'capital'
+  // Вклад учасника: гроші прийшли в касу, борг перед учасником виріс.
+  | 'contribution_in'
+  | 'contribution_out'
+  // Переказ між учасниками одного бізнесу: каси не рухаються, міняється
+  // тільки те, кому бізнес винен.
+  | 'claim_out'
+  | 'claim_in'
 
-export type RequestStatus = 'draft' | 'open' | 'funded' | 'disbursed' | 'expired' | 'cancelled'
-export type LoanStatus = 'disbursed' | 'repaying' | 'closed' | 'overdue' | 'defaulted'
-export type RepaymentType = 'bullet' | 'interest_only_flex'
-export type FeeKind = 'transfer' | 'interest_share' | 'origination'
+// 'declined' окремо від 'ended': людина, яка відмовилась одразу, і людина,
+// яка була в бізнесі й вийшла, — різні історії, і список учасників не має
+// показувати їх однаково.
+export type MemberStatus = 'pending' | 'active' | 'declined' | 'ended'
+export type ContributionDirection = 'in' | 'out'
+export type ContributionStatus = 'pending' | 'accepted' | 'rejected'
+
+/** Рядок перерахунку: конкретна каса, або готівка поза касами в одній валюті. */
+export type CountLineKind = 'register' | 'cash'
+
+export type FeeKind = 'transfer'
 
 /** One side of a ledger transaction. */
 export interface LedgerEntryInput {
@@ -54,7 +95,6 @@ export interface LedgerEntryInput {
   entryType?: EntryType | string
   comment?: string | null
   counterpartyId?: string | null
-  relatedLoanId?: string | null
 }
 
 export interface PostTransactionInput {

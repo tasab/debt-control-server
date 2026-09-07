@@ -91,7 +91,8 @@ export default fp(async function authPlugin(fastify: FastifyInstance) {
       .limit(1)
 
     if (!row) return null
-    if (row.expiresAt.getTime() < Date.now()) return null
+    // expiresAt = null — сесія без строку; гасить її тільки revokedAt вище.
+    if (row.expiresAt && row.expiresAt.getTime() < Date.now()) return null
     return row as AuthUser
   }
 })

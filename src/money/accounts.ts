@@ -7,9 +7,19 @@ import type { AccountKind, DbOrTx, OwnerType } from '../types.ts'
 export type Account = typeof accounts.$inferSelect
 
 // Account kinds whose balance may never go below zero. Everything else
-// (platform pots, `external`, loan principal) is expected to sit negative —
-// that is what makes the ledger sum to zero.
-export const NON_NEGATIVE_KINDS = new Set(['user_wallet', 'user_hold', 'business_register'])
+// (platform pots, `external`) is expected to sit negative — that is what
+// makes the ledger sum to zero.
+export const NON_NEGATIVE_KINDS = new Set([
+  'user_wallet',
+  'user_hold',
+  'business_register',
+  'business_cash',
+])
+
+// Дзеркало NON_NEGATIVE_KINDS: борг перед учасником ніколи не буває додатним.
+// Плюс на member_claim означав би, що учасник забрав більше, ніж вклав, — це
+// не борг бізнесу, а борг учасника, і такої операції в моделі немає.
+export const NON_POSITIVE_KINDS = new Set(['member_claim'])
 
 export const PLATFORM_OWNER = { ownerType: 'platform', ownerId: 'platform' } as const
 
@@ -71,6 +81,40 @@ export const userHold = (userId: string, currency: string, tx?: DbOrTx) =>
 export const businessWallet = (businessId: string, currency: string, tx?: DbOrTx) =>
   ensureAccount({ ownerType: 'business', ownerId: businessId, kind: 'user_wallet', currency }, tx)
 
+/** Готівка поза касами — по одному рахунку на валюту, створюється за потреби. */
+export const businessCash = (businessId: string, currency: string, tx?: DbOrTx) =>
+  ensureAccount({ ownerType: 'business', ownerId: businessId, kind: 'business_cash', currency }, tx)
+
+// P&L. Ні дохід, ні витрата не входять до NON_NEGATIVE_KINDS: сторнування
+// має лишатися можливим, а знак тут — наслідок проводок, не обмеження.
+export const businessIncome = (businessId: string, currency: string, tx?: DbOrTx) =>
+  ensureAccount({ ownerType: 'business', ownerId: businessId, kind: 'business_income', currency }, tx)
+
+export const businessExpense = (businessId: string, currency: string, tx?: DbOrTx) =>
+  ensureAccount({ ownerType: 'business', ownerId: businessId, kind: 'business_expense', currency }, tx)
+
+/**
+ * Власний капітал: скільки грошей власник вклав у бізнес зі своєї кишені.
+ *
+ * Живе від'ємним, як і будь-яке джерело коштів: гроші прийшли ззовні, і
+ * бізнес їх не заробляв. Пара до `business_draw` — вкладено і забрано.
+ */
+export const businessCapital = (businessId: string, currency: string, tx?: DbOrTx) =>
+  ensureAccount({ ownerType: 'business', ownerId: businessId, kind: 'business_capital', currency }, tx)
+
+/** Вилучення власником — накопичувально, окремо від витрат. */
+export const businessDraw = (businessId: string, currency: string, tx?: DbOrTx) =>
+  ensureAccount({ ownerType: 'business', ownerId: businessId, kind: 'business_draw', currency }, tx)
+
+/**
+ * Борг бізнесу перед одним учасником в одній валюті.
+ *
+ * Власник — участь, а не людина: та сама людина може вкластися у два бізнеси,
+ * і зливати ці два борги в один рахунок було б помилкою.
+ */
+export const memberClaim = (memberId: string, currency: string, tx?: DbOrTx) =>
+  ensureAccount({ ownerType: 'membership', ownerId: memberId, kind: 'member_claim', currency }, tx)
+
 export const platformFee = (currency: string, tx?: DbOrTx) =>
   ensureAccount({ ...PLATFORM_OWNER, kind: 'platform_fee', currency }, tx)
 
@@ -80,5 +124,3 @@ export const platformFx = (currency: string, tx?: DbOrTx) =>
 export const externalAccount = (currency: string, tx?: DbOrTx) =>
   ensureAccount({ ...PLATFORM_OWNER, kind: 'external', currency }, tx)
 
-export const loanPrincipal = (loanId: string, currency: string, tx?: DbOrTx) =>
-  ensureAccount({ ownerType: 'loan', ownerId: loanId, kind: 'loan_principal', currency }, tx)

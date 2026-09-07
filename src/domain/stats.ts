@@ -1,17 +1,14 @@
-import { and, eq, sql } from 'drizzle-orm'
+import { and, eq, inArray, or, sql } from 'drizzle-orm'
 import { db } from '../db/index.ts'
 import {
   accounts,
-  balanceSnapshots,
+  businessMembers,
   businesses,
   ledgerEntries,
-  loanShares,
-  loans,
-  repaymentSplits,
 } from '../../db/schema/index.ts'
 import { walletsForUser } from '../money/balances.ts'
 import { valuationTable } from '../money/valuation.ts'
-import { divFloor } from '../money/amount.ts'
+import { claimBalances, liabilitiesOf } from './members.ts'
 import type { Money } from '../types.ts'
 
 interface HistoryPoint {
@@ -21,12 +18,27 @@ interface HistoryPoint {
   currencies: Record<string, Money>
 }
 
-/** YYYY-MM-DD in UTC — the key balance_snapshots is written under. */
-export const dayKey = (date: Date | string = new Date()): string => new Date(date).toISOString().slice(0, 10)
+/** YYYY-MM-DD в UTC — ключ, за яким групується день. */
+export const dayKey = (date: Date | string = new Date()): string =>
+  new Date(date).toISOString().slice(0, 10)
+
+const addDays = (key: string, days: number): string => {
+  const d = new Date(`${key}T00:00:00Z`)
+  d.setUTCDate(d.getUTCDate() + days)
+  return dayKey(d)
+}
 
 /**
- * Balance chart. Reads the nightly snapshots (§7) rather than aggregating the
- * ledger, so a year of history is one indexed range scan.
+ * Графік портфеля, виведений із журналу проводок.
+ *
+ * Не зі знімків: знімок з'являється лише в той день, коли працював джоб, тож
+ * вимкнений на ніч сервер лишав би в історії дірку, а рік тому знімків немає
+ * взагалі. Журнал натомість пам'ятає кожен рух від першого дня, тому графік
+ * будується заднім числом і точно — це та сама сума проводок, що й будь-який
+ * баланс у цьому додатку.
+ *
+ * Оцінка в базовій валюті робиться за поточним курсом на всю історію: так
+ * крива показує рух власне грошей, а не коливання курсу під ними.
  */
 export async function balanceHistory({
   userId,
@@ -39,241 +51,134 @@ export async function balanceHistory({
   to?: string
   currency?: string
 }): Promise<HistoryPoint[]> {
-  const conditions = [eq(balanceSnapshots.userId, userId)]
-  if (from) conditions.push(sql`${balanceSnapshots.date} >= ${dayKey(from)}`)
-  if (to) conditions.push(sql`${balanceSnapshots.date} <= ${dayKey(to)}`)
-  if (currency) conditions.push(eq(balanceSnapshots.currency, currency))
+  const { toBase } = await valuationTable()
+
+  // Гаманець — рахунки людини; вкладене — рахунки її участей, з протилежним
+  // знаком, бо в журналі вимога живе від'ємною.
+  const memberships = await db
+    .select({ id: businessMembers.id })
+    .from(businessMembers)
+    .where(eq(businessMembers.userId, userId))
+  const membershipIds = memberships.map((m) => m.id)
+
+  const conditions = [
+    and(
+      eq(accounts.ownerType, 'user'),
+      eq(accounts.ownerId, userId),
+      eq(accounts.kind, 'user_wallet'),
+    ),
+  ]
+  if (membershipIds.length > 0) {
+    conditions.push(
+      and(eq(accounts.ownerType, 'membership'), inArray(accounts.ownerId, membershipIds))!,
+    )
+  }
 
   const rows = await db
-    .select()
-    .from(balanceSnapshots)
-    .where(and(...conditions))
-    .orderBy(balanceSnapshots.date)
+    .select({
+      day: sql<string>`to_char(date_trunc('day', ${ledgerEntries.createdAt} AT TIME ZONE 'UTC'), 'YYYY-MM-DD')`,
+      currency: ledgerEntries.currency,
+      kind: accounts.kind,
+      delta: sql<string>`SUM(${ledgerEntries.amount})`,
+    })
+    .from(ledgerEntries)
+    .innerJoin(accounts, eq(accounts.id, ledgerEntries.accountId))
+    .where(or(...conditions))
+    .groupBy(sql`1`, ledgerEntries.currency, accounts.kind)
+    .orderBy(sql`1`)
 
-  // Shape it as one point per day: totals in the base currency plus the
-  // per-currency and per-kind breakdown the UI switches between.
-  const byDate = new Map<string, HistoryPoint>()
-  for (const row of rows) {
-    const point = byDate.get(row.date) ?? { date: row.date, totalBase: 0n, kinds: {}, currencies: {} }
-    point.totalBase += row.amountBase
-    point.kinds[row.kind] = (point.kinds[row.kind] ?? 0n) + row.amountBase
-    point.currencies[row.currency] = (point.currencies[row.currency] ?? 0n) + row.amount
-    byDate.set(row.date, point)
+  if (rows.length === 0) return []
+
+  const series = rows
+    .filter((row) => !currency || row.currency === currency)
+    .map((row) => ({
+      day: row.day,
+      currency: row.currency,
+      // member_claim від'ємний у журналі; назовні «вкладено» — додатне.
+      kind: row.kind === 'user_wallet' ? 'wallet' : 'invested',
+      delta: row.kind === 'user_wallet' ? BigInt(row.delta) : -BigInt(row.delta),
+    }))
+  if (series.length === 0) return []
+
+  const byDay = new Map<string, typeof series>()
+  for (const row of series) {
+    const bucket = byDay.get(row.day) ?? []
+    bucket.push(row)
+    byDay.set(row.day, bucket)
   }
-  return [...byDate.values()]
+
+  const first = series[0]!.day
+  const last = dayKey(to ?? new Date())
+  const start = from ? dayKey(from) : first
+  const points: HistoryPoint[] = []
+
+  // Наростаючий підсумок від першого руху: залишок дня — це сума всього, що
+  // сталося включно з ним, тож дні без проводок просто повторюють попередній.
+  const running = new Map<string, Money>() // "kind|currency" → залишок
+  for (let day = first < start ? first : start; day <= last; day = addDays(day, 1)) {
+    for (const row of byDay.get(day) ?? []) {
+      const key = `${row.kind}|${row.currency}`
+      running.set(key, (running.get(key) ?? 0n) + row.delta)
+    }
+    if (day < start) continue
+
+    const point: HistoryPoint = { date: day, totalBase: 0n, kinds: {}, currencies: {} }
+    for (const [key, amount] of running) {
+      const [kind, code] = key.split('|') as [string, string]
+      const base = toBase(amount, code)
+      point.totalBase += base
+      point.kinds[kind] = (point.kinds[kind] ?? 0n) + base
+      point.currencies[code] = (point.currencies[code] ?? 0n) + amount
+    }
+    points.push(point)
+  }
+
+  return points
 }
 
-/** Headline numbers: what the user holds, has lent out, and owes. */
+/**
+ * Головні цифри: скільки в людини вільних коштів, скільки вкладено в бізнеси
+ * і скільки винен її власний бізнес.
+ *
+ * Позик тут більше немає — вклад це не позика з графіком, а залишок рахунку
+ * учасника, тож «скільки я вклав» — той самий запит по журналу, що й баланс.
+ */
 export async function summary(userId: string) {
   const { toBase, base } = await valuationTable()
   const wallets = await walletsForUser(userId)
 
   let walletBase = 0n
-  let heldBase = 0n
-  for (const wallet of wallets) {
-    walletBase += toBase(wallet.available, wallet.currency)
-    heldBase += toBase(wallet.held, wallet.currency)
+  for (const wallet of wallets) walletBase += toBase(wallet.available, wallet.currency)
+
+  // Вкладено: борг усіх бізнесів, у яких людина є активним учасником.
+  const memberships = await db
+    .select()
+    .from(businessMembers)
+    .where(and(eq(businessMembers.userId, userId), eq(businessMembers.status, 'active')))
+
+  let investedBase = 0n
+  for (const membership of memberships) {
+    for (const row of await claimBalances(membership.id)) {
+      investedBase += toBase(row.balance, row.currency)
+    }
   }
 
-  // Lent out: this investor's share of every active loan's outstanding principal.
-  const investorRows = await db
-    .select({ loan: loans, share: loanShares })
-    .from(loanShares)
-    .innerJoin(loans, eq(loans.id, loanShares.loanId))
-    .where(eq(loanShares.investorId, userId))
-
-  let lentBase = 0n
-  let accruedBase = 0n
-  let overdueBase = 0n
-  for (const { loan, share } of investorRows) {
-    if (['closed'].includes(loan.status)) continue
-    const myPrincipal = divFloor(loan.outstandingPrincipal * BigInt(share.shareBps), 10000n)
-    const myInterest = divFloor(
-      (loan.accruedInterest - loan.paidInterest) * BigInt(share.shareBps),
-      10000n,
-    )
-    lentBase += toBase(myPrincipal, loan.currency)
-    accruedBase += toBase(myInterest, loan.currency)
-    if (loan.status === 'overdue') overdueBase += toBase(myPrincipal, loan.currency)
-  }
-
-  // Borrowed: outstanding debt of this user's business, if any.
+  // Заборгованість: скільки винен власний бізнес, якщо він є.
   let borrowedBase = 0n
   const [business] = await db
     .select()
     .from(businesses)
     .where(eq(businesses.ownerUserId, userId))
     .limit(1)
-  if (business) {
-    const borrowerLoans = await db
-      .select()
-      .from(loans)
-      .where(
-        and(eq(loans.businessId, business.id), sql`${loans.status} <> 'closed'`),
-      )
-    for (const loan of borrowerLoans) {
-      borrowedBase += toBase(
-        loan.outstandingPrincipal + (loan.accruedInterest - loan.paidInterest),
-        loan.currency,
-      )
-    }
-  }
+  if (business) borrowedBase = (await liabilitiesOf(business.id)).total
 
   return {
     baseCurrency: base,
     wallets: walletBase,
-    held: heldBase,
-    lent: lentBase,
-    accrued: accruedBase,
-    overdue: overdueBase,
+    invested: investedBase,
     borrowed: borrowedBase,
-    netWorth: walletBase + heldBase + lentBase + accruedBase - borrowedBase,
+    netWorth: walletBase + investedBase - borrowedBase,
   }
-}
-
-/**
- * Investor portfolio. Return is reported as a simple realised yield —
- * interest received net of fees over principal deployed, annualised — and
- * labelled as such. A full XIRR needs a dated cash-flow series per position;
- * quoting one here without it would be a number nobody could reproduce.
- */
-export async function portfolio(userId: string) {
-  const { toBase, base } = await valuationTable()
-
-  const positions = await db
-    .select({ loan: loans, share: loanShares, business: businesses })
-    .from(loanShares)
-    .innerJoin(loans, eq(loans.id, loanShares.loanId))
-    .innerJoin(businesses, eq(businesses.id, loans.businessId))
-    .where(eq(loanShares.investorId, userId))
-
-  const [received] = await db
-    .select({
-      interest: sql`COALESCE(SUM(${repaymentSplits.interest}), 0)`,
-      fee: sql`COALESCE(SUM(${repaymentSplits.fee}), 0)`,
-      principal: sql`COALESCE(SUM(${repaymentSplits.principal}), 0)`,
-    })
-    .from(repaymentSplits)
-    .where(eq(repaymentSplits.investorId, userId))
-
-  let activeBase = 0n
-  let deployedBase = 0n
-  let weightedRate = 0n
-  const byBusiness = new Map<string, { id: string; name: string; amount: Money }>()
-
-  for (const { loan, share, business } of positions) {
-    const myPrincipal = divFloor(loan.outstandingPrincipal * BigInt(share.shareBps), 10000n)
-    const principalBase = toBase(myPrincipal, loan.currency)
-    deployedBase += toBase(share.principalShare, loan.currency)
-    if (loan.status !== 'closed') {
-      activeBase += principalBase
-      weightedRate += principalBase * BigInt(loan.rateAnnualBps)
-      const row = byBusiness.get(business.id) ?? { id: business.id, name: business.name, amount: 0n }
-      row.amount += principalBase
-      byBusiness.set(business.id, row)
-    }
-  }
-
-  const distribution = [...byBusiness.values()]
-    .map((row) => ({
-      ...row,
-      shareBps: activeBase > 0n ? Number((row.amount * 10000n) / activeBase) : 0,
-    }))
-    .sort((a, b) => b.shareBps - a.shareBps)
-
-  // §11: concentration is warned about, not blocked — the investor decides.
-  const concentration = distribution.find((row) => row.shareBps > 5000) ?? null
-
-  const totals = received as { interest: string; fee: string; principal: string }
-  const interestNet = BigInt(totals.interest) - BigInt(totals.fee)
-  return {
-    baseCurrency: base,
-    activePrincipal: activeBase,
-    totalDeployed: deployedBase,
-    interestReceived: BigInt(totals.interest),
-    feesPaid: BigInt(totals.fee),
-    principalReturned: BigInt(totals.principal),
-    netInterest: interestNet,
-    weightedRateBps: activeBase > 0n ? Number(weightedRate / activeBase) : 0,
-    positionCount: positions.filter((p) => p.loan.status !== 'closed').length,
-    defaultedCount: positions.filter((p) => p.loan.status === 'defaulted').length,
-    overdueCount: positions.filter((p) => p.loan.status === 'overdue').length,
-    distribution,
-    concentrationWarning: concentration
-      ? { businessId: concentration.id, name: concentration.name, shareBps: concentration.shareBps }
-      : null,
-  }
-}
-
-/**
- * Nightly snapshot writer. Idempotent per (user, date): re-running overwrites
- * the same rows rather than doubling them.
- */
-export async function writeSnapshots(
-  date: Date = new Date(),
-  log: Partial<Console> = console,
-): Promise<number> {
-  const { toBase } = await valuationTable()
-  const key = dayKey(date)
-
-  const userIds = await db
-    .selectDistinct({ id: accounts.ownerId })
-    .from(accounts)
-    .where(eq(accounts.ownerType, 'user'))
-
-  let written = 0
-  for (const { id: userId } of userIds) {
-    const wallets = await walletsForUser(userId)
-    const rows: Array<{ currency: string; kind: string; amount: Money }> = []
-    for (const wallet of wallets) {
-      if (wallet.available !== 0n) {
-        rows.push({ currency: wallet.currency, kind: 'wallet', amount: wallet.available })
-      }
-      if (wallet.held !== 0n) {
-        rows.push({ currency: wallet.currency, kind: 'held', amount: wallet.held })
-      }
-    }
-
-    const lent = await db
-      .select({ loan: loans, share: loanShares })
-      .from(loanShares)
-      .innerJoin(loans, eq(loans.id, loanShares.loanId))
-      .where(and(eq(loanShares.investorId, userId), sql`${loans.status} <> 'closed'`))
-    const lentByCurrency = new Map<string, Money>()
-    for (const { loan, share } of lent) {
-      const mine = divFloor(loan.outstandingPrincipal * BigInt(share.shareBps), 10000n)
-      lentByCurrency.set(loan.currency, (lentByCurrency.get(loan.currency) ?? 0n) + mine)
-    }
-    for (const [currency, amount] of lentByCurrency) {
-      if (amount !== 0n) rows.push({ currency, kind: 'lent', amount })
-    }
-
-    for (const row of rows) {
-      await db
-        .insert(balanceSnapshots)
-        .values({
-          userId,
-          date: key,
-          currency: row.currency,
-          kind: row.kind,
-          amount: row.amount,
-          amountBase: toBase(row.amount, row.currency),
-        })
-        .onConflictDoUpdate({
-          target: [
-            balanceSnapshots.userId,
-            balanceSnapshots.date,
-            balanceSnapshots.currency,
-            balanceSnapshots.kind,
-          ],
-          set: { amount: row.amount, amountBase: toBase(row.amount, row.currency) },
-        })
-      written += 1
-    }
-  }
-
-  log.info?.({ date: key, rows: written }, 'snapshots: written')
-  return written
 }
 
 /** CSV export of the transaction history (§7). */

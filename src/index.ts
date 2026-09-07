@@ -13,9 +13,10 @@ import walletRoutes from './routes/wallets.ts'
 import transferRoutes from './routes/transfers.ts'
 import fxRoutes from './routes/fx.ts'
 import businessRoutes from './routes/businesses.ts'
-import requestRoutes from './routes/requests.ts'
-import loanRoutes from './routes/loans.ts'
+import memberRoutes from './routes/members.ts'
+import shareRoutes from './routes/shares.ts'
 import statsRoutes from './routes/stats.ts'
+import adminRoutes from './routes/admin.ts'
 import { startJobs } from './jobs/index.ts'
 
 assertConfig()
@@ -46,9 +47,10 @@ export async function buildServer({ logger = true } = {}) {
       await scope.register(transferRoutes)
       await scope.register(fxRoutes)
       await scope.register(businessRoutes)
-      await scope.register(requestRoutes)
-      await scope.register(loanRoutes)
+      await scope.register(memberRoutes)
+      await scope.register(shareRoutes)
       await scope.register(statsRoutes)
+      await scope.register(adminRoutes)
     },
     { prefix: '/api' },
   )

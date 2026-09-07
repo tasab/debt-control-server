@@ -1,7 +1,8 @@
 /**
- * Phase-1 rate provider (PLATFORM_PLAN §3.3). Returns exactly the shape the
- * future external API will return — `{ code, bid, sell }` with major-unit
- * decimal strings — so switching to it is a config change, not a code change.
+ * Offline fallback provider (PLATFORM_PLAN §3.3), used only with
+ * RATE_SOURCE=hardcoded — the default source is the live feed in external.ts.
+ * These numbers are stale by design and exist so tests and a no-network demo
+ * still have a rate to work with.
  *
  * bid  = platform BUYS this currency for UAH (user sells at this price)
  * sell = platform SELLS this currency for UAH (user buys at this price)

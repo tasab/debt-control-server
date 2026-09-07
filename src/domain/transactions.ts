@@ -23,7 +23,6 @@ interface EntryRow {
   amount: Money
   comment: string | null
   counterpartyId: string | null
-  relatedLoanId: string | null
   createdAt: Date
   accountKind: string
 }
@@ -64,7 +63,6 @@ export async function listTransactions(userId: string, query: HistoryQuery = {})
       amount: ledgerEntries.amount,
       comment: ledgerEntries.comment,
       counterpartyId: ledgerEntries.counterpartyId,
-      relatedLoanId: ledgerEntries.relatedLoanId,
       createdAt: ledgerEntries.createdAt,
       accountKind: accounts.kind,
     })
@@ -96,7 +94,6 @@ export async function getTransaction(userId: string, transactionId: string) {
       amount: ledgerEntries.amount,
       comment: ledgerEntries.comment,
       counterpartyId: ledgerEntries.counterpartyId,
-      relatedLoanId: ledgerEntries.relatedLoanId,
       createdAt: ledgerEntries.createdAt,
       accountKind: accounts.kind,
       txType: transactions.type,
@@ -147,14 +144,13 @@ function serializeEntry(row: EntryRow, counterparties: Counterparties) {
     held: row.accountKind === 'user_hold',
     comment: row.comment,
     counterparty: row.counterpartyId ? (counterparties.get(row.counterpartyId) ?? null) : null,
-    relatedLoanId: row.relatedLoanId,
     createdAt: iso(row.createdAt),
   }
 }
 
 /** Meta may carry internal ids; only the fields the UI needs are exposed. */
 function sanitizeMeta(meta: Record<string, unknown> | null = {}) {
-  const allowed = ['fee', 'feePolicyId', 'rate', 'quoteId', 'requestId', 'loanId', 'reason']
+  const allowed = ['fee', 'feePolicyId', 'rate', 'quoteId', 'reason']
   return Object.fromEntries(
     Object.entries(meta ?? {})
       .filter(([key]) => allowed.includes(key))

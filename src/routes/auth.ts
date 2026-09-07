@@ -5,16 +5,22 @@ import { config } from '../config.ts'
 import { SESSION_COOKIE } from '../plugins/auth.ts'
 import { loginSchema, registerSchema, searchSchema } from '../validation/auth.ts'
 import * as auth from '../domain/auth.ts'
-import { ratingFor } from '../domain/scoring.ts'
 import { serializeUser } from '../serialize.ts'
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify'
+
+// 400 днів — стеля, яку браузери (Chrome 104+, слідом решта) накладають на
+// будь-яку куку незалежно від того, що просить сервер. Тобто «вічно» на боці
+// браузера означає саме це: раз на ~13 місяців кука все одно оновиться при
+// наступному вході. Сама сесія в базі при цьому строку не має.
+const COOKIE_MAX_AGE_SECONDS = 400 * 24 * 60 * 60
 
 const cookieOptions = {
   httpOnly: true,
   sameSite: 'lax' as const,
   secure: config.isProduction,
   path: '/',
-  maxAge: config.sessionTtlDays * 24 * 60 * 60,
+  maxAge:
+    config.sessionTtlDays > 0 ? config.sessionTtlDays * 24 * 60 * 60 : COOKIE_MAX_AGE_SECONDS,
 }
 
 export default async function authRoutes(fastify: FastifyInstance) {
@@ -24,9 +30,13 @@ export default async function authRoutes(fastify: FastifyInstance) {
   })
 
   const setSession = (reply: FastifyReply, user: { id: string }, session: { id: string }) => {
+    // Без `expiresIn` за замовчуванням: строк сесії живе в базі, а не в
+    // підписі, і саме там його можна зняти. JWT із власним строком просто
+    // перестав би прийматися посеред роботи, і зробити з цим нічого не можна
+    // було б навіть маючи живу сесію.
     const token = fastify.jwt.sign(
       { sub: user.id, sid: session.id },
-      { expiresIn: `${config.sessionTtlDays}d` },
+      config.sessionTtlDays > 0 ? { expiresIn: `${config.sessionTtlDays}d` } : {},
     )
     reply.setCookie(SESSION_COOKIE, token, cookieOptions)
   }
@@ -88,8 +98,6 @@ async function mePayload(user: { id: string }) {
     .where(eq(businesses.ownerUserId, user.id))
     .limit(1)
 
-  return serializeUser(full, {
-    rating: await ratingFor(user.id),
-    businessId: business?.id ?? null,
-  })
+  // Рейтинг рахувався з історії позик; без неї оцінювати нема чого.
+  return serializeUser(full, { businessId: business?.id ?? null })
 }

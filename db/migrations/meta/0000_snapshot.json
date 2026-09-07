@@ -1,5 +1,5 @@
 {
-  "id": "67be3580-ff87-449f-9aef-be20fe92657d",
+  "id": "61b1ba2e-1bba-4521-ac53-3b66589e3eca",
   "prevId": "00000000-0000-0000-0000-000000000000",
   "version": "7",
   "dialect": "postgresql",
@@ -274,6 +274,114 @@
       "checkConstraints": {},
       "isRLSEnabled": false
     },
+    "public.balance_shares": {
+      "name": "balance_shares",
+      "schema": "",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "text",
+          "primaryKey": true,
+          "notNull": true
+        },
+        "user_id": {
+          "name": "user_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "token": {
+          "name": "token",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "label": {
+          "name": "label",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "view_count": {
+          "name": "view_count",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "default": 0
+        },
+        "last_viewed_at": {
+          "name": "last_viewed_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "revoked_at": {
+          "name": "revoked_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        }
+      },
+      "indexes": {
+        "idx_balance_shares_token": {
+          "name": "idx_balance_shares_token",
+          "columns": [
+            {
+              "expression": "token",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": true,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
+        "idx_balance_shares_user": {
+          "name": "idx_balance_shares_user",
+          "columns": [
+            {
+              "expression": "user_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        }
+      },
+      "foreignKeys": {
+        "balance_shares_user_id_users_id_fk": {
+          "name": "balance_shares_user_id_users_id_fk",
+          "tableFrom": "balance_shares",
+          "tableTo": "users",
+          "columnsFrom": [
+            "user_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "policies": {},
+      "checkConstraints": {},
+      "isRLSEnabled": false
+    },
     "public.currencies": {
       "name": "currencies",
       "schema": "",
@@ -530,12 +638,6 @@
           "primaryKey": false,
           "notNull": false
         },
-        "related_loan_id": {
-          "name": "related_loan_id",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": false
-        },
         "created_at": {
           "name": "created_at",
           "type": "timestamp with time zone",
@@ -636,7 +738,7 @@
           "name": "expires_at",
           "type": "timestamp with time zone",
           "primaryKey": false,
-          "notNull": true
+          "notNull": false
         },
         "revoked_at": {
           "name": "revoked_at",
@@ -1261,6 +1363,253 @@
       "checkConstraints": {},
       "isRLSEnabled": false
     },
+    "public.cash_count_lines": {
+      "name": "cash_count_lines",
+      "schema": "",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "text",
+          "primaryKey": true,
+          "notNull": true
+        },
+        "count_id": {
+          "name": "count_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "account_id": {
+          "name": "account_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "kind": {
+          "name": "kind",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "register_id": {
+          "name": "register_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "currency": {
+          "name": "currency",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "counted": {
+          "name": "counted",
+          "type": "bigint",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "previous": {
+          "name": "previous",
+          "type": "bigint",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "delta": {
+          "name": "delta",
+          "type": "bigint",
+          "primaryKey": false,
+          "notNull": true
+        }
+      },
+      "indexes": {
+        "idx_cash_count_lines_count": {
+          "name": "idx_cash_count_lines_count",
+          "columns": [
+            {
+              "expression": "count_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        }
+      },
+      "foreignKeys": {
+        "cash_count_lines_count_id_cash_counts_id_fk": {
+          "name": "cash_count_lines_count_id_cash_counts_id_fk",
+          "tableFrom": "cash_count_lines",
+          "tableTo": "cash_counts",
+          "columnsFrom": [
+            "count_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        },
+        "cash_count_lines_register_id_registers_id_fk": {
+          "name": "cash_count_lines_register_id_registers_id_fk",
+          "tableFrom": "cash_count_lines",
+          "tableTo": "registers",
+          "columnsFrom": [
+            "register_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "policies": {},
+      "checkConstraints": {},
+      "isRLSEnabled": false
+    },
+    "public.cash_counts": {
+      "name": "cash_counts",
+      "schema": "",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "text",
+          "primaryKey": true,
+          "notNull": true
+        },
+        "business_id": {
+          "name": "business_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "transaction_id": {
+          "name": "transaction_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "counted_by": {
+          "name": "counted_by",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "note": {
+          "name": "note",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "counted_at": {
+          "name": "counted_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        },
+        "reversed_at": {
+          "name": "reversed_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "reversed_by": {
+          "name": "reversed_by",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "reversal_tx_id": {
+          "name": "reversal_tx_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        }
+      },
+      "indexes": {
+        "idx_cash_counts_biz": {
+          "name": "idx_cash_counts_biz",
+          "columns": [
+            {
+              "expression": "business_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "counted_at",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        }
+      },
+      "foreignKeys": {
+        "cash_counts_business_id_businesses_id_fk": {
+          "name": "cash_counts_business_id_businesses_id_fk",
+          "tableFrom": "cash_counts",
+          "tableTo": "businesses",
+          "columnsFrom": [
+            "business_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        },
+        "cash_counts_counted_by_users_id_fk": {
+          "name": "cash_counts_counted_by_users_id_fk",
+          "tableFrom": "cash_counts",
+          "tableTo": "users",
+          "columnsFrom": [
+            "counted_by"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        },
+        "cash_counts_reversed_by_users_id_fk": {
+          "name": "cash_counts_reversed_by_users_id_fk",
+          "tableFrom": "cash_counts",
+          "tableTo": "users",
+          "columnsFrom": [
+            "reversed_by"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "policies": {},
+      "checkConstraints": {},
+      "isRLSEnabled": false
+    },
     "public.registers": {
       "name": "registers",
       "schema": "",
@@ -1434,8 +1783,8 @@
       "checkConstraints": {},
       "isRLSEnabled": false
     },
-    "public.funding_requests": {
-      "name": "funding_requests",
+    "public.business_members": {
+      "name": "business_members",
       "schema": "",
       "columns": {
         "id": {
@@ -1450,117 +1799,72 @@
           "primaryKey": false,
           "notNull": true
         },
-        "currency": {
-          "name": "currency",
+        "user_id": {
+          "name": "user_id",
           "type": "text",
           "primaryKey": false,
           "notNull": true
-        },
-        "amount_target": {
-          "name": "amount_target",
-          "type": "bigint",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "amount_funded": {
-          "name": "amount_funded",
-          "type": "bigint",
-          "primaryKey": false,
-          "notNull": true,
-          "default": "0"
-        },
-        "rate_annual_bps": {
-          "name": "rate_annual_bps",
-          "type": "integer",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "term_days": {
-          "name": "term_days",
-          "type": "integer",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "repayment_type": {
-          "name": "repayment_type",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "min_ticket": {
-          "name": "min_ticket",
-          "type": "bigint",
-          "primaryKey": false,
-          "notNull": true,
-          "default": "10000"
-        },
-        "min_fill_bps": {
-          "name": "min_fill_bps",
-          "type": "integer",
-          "primaryKey": false,
-          "notNull": true,
-          "default": 5000
-        },
-        "purpose": {
-          "name": "purpose",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": false
         },
         "status": {
           "name": "status",
           "type": "text",
           "primaryKey": false,
           "notNull": true,
-          "default": "'open'"
+          "default": "'pending'"
         },
-        "expires_at": {
-          "name": "expires_at",
-          "type": "timestamp with time zone",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "created_at": {
-          "name": "created_at",
+        "invited_at": {
+          "name": "invited_at",
           "type": "timestamp with time zone",
           "primaryKey": false,
           "notNull": true,
           "default": "now()"
         },
-        "closed_at": {
-          "name": "closed_at",
+        "joined_at": {
+          "name": "joined_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "ended_at": {
+          "name": "ended_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "hidden_at": {
+          "name": "hidden_at",
           "type": "timestamp with time zone",
           "primaryKey": false,
           "notNull": false
         }
       },
       "indexes": {
-        "idx_requests_status": {
-          "name": "idx_requests_status",
+        "idx_members_pair": {
+          "name": "idx_members_pair",
           "columns": [
             {
-              "expression": "status",
+              "expression": "business_id",
               "isExpression": false,
               "asc": true,
               "nulls": "last"
             },
             {
-              "expression": "created_at",
+              "expression": "user_id",
               "isExpression": false,
               "asc": true,
               "nulls": "last"
             }
           ],
-          "isUnique": false,
+          "isUnique": true,
           "concurrently": false,
           "method": "btree",
           "with": {}
         },
-        "idx_requests_business": {
-          "name": "idx_requests_business",
+        "idx_members_user": {
+          "name": "idx_members_user",
           "columns": [
             {
-              "expression": "business_id",
+              "expression": "user_id",
               "isExpression": false,
               "asc": true,
               "nulls": "last"
@@ -1573,12 +1877,25 @@
         }
       },
       "foreignKeys": {
-        "funding_requests_business_id_businesses_id_fk": {
-          "name": "funding_requests_business_id_businesses_id_fk",
-          "tableFrom": "funding_requests",
+        "business_members_business_id_businesses_id_fk": {
+          "name": "business_members_business_id_businesses_id_fk",
+          "tableFrom": "business_members",
           "tableTo": "businesses",
           "columnsFrom": [
             "business_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        },
+        "business_members_user_id_users_id_fk": {
+          "name": "business_members_user_id_users_id_fk",
+          "tableFrom": "business_members",
+          "tableTo": "users",
+          "columnsFrom": [
+            "user_id"
           ],
           "columnsTo": [
             "id"
@@ -1593,8 +1910,8 @@
       "checkConstraints": {},
       "isRLSEnabled": false
     },
-    "public.fundings": {
-      "name": "fundings",
+    "public.contributions": {
+      "name": "contributions",
       "schema": "",
       "columns": {
         "id": {
@@ -1603,14 +1920,20 @@
           "primaryKey": true,
           "notNull": true
         },
-        "request_id": {
-          "name": "request_id",
+        "member_id": {
+          "name": "member_id",
           "type": "text",
           "primaryKey": false,
           "notNull": true
         },
-        "investor_id": {
-          "name": "investor_id",
+        "direction": {
+          "name": "direction",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "currency": {
+          "name": "currency",
           "type": "text",
           "primaryKey": false,
           "notNull": true
@@ -1626,411 +1949,19 @@
           "type": "text",
           "primaryKey": false,
           "notNull": true,
-          "default": "'held'"
+          "default": "'pending'"
         },
-        "hold_tx_id": {
-          "name": "hold_tx_id",
+        "note": {
+          "name": "note",
           "type": "text",
           "primaryKey": false,
           "notNull": false
         },
-        "created_at": {
-          "name": "created_at",
-          "type": "timestamp with time zone",
-          "primaryKey": false,
-          "notNull": true,
-          "default": "now()"
-        },
-        "closed_at": {
-          "name": "closed_at",
-          "type": "timestamp with time zone",
+        "target_account_id": {
+          "name": "target_account_id",
+          "type": "text",
           "primaryKey": false,
           "notNull": false
-        }
-      },
-      "indexes": {
-        "idx_fundings_request": {
-          "name": "idx_fundings_request",
-          "columns": [
-            {
-              "expression": "request_id",
-              "isExpression": false,
-              "asc": true,
-              "nulls": "last"
-            },
-            {
-              "expression": "status",
-              "isExpression": false,
-              "asc": true,
-              "nulls": "last"
-            }
-          ],
-          "isUnique": false,
-          "concurrently": false,
-          "method": "btree",
-          "with": {}
-        },
-        "idx_fundings_investor": {
-          "name": "idx_fundings_investor",
-          "columns": [
-            {
-              "expression": "investor_id",
-              "isExpression": false,
-              "asc": true,
-              "nulls": "last"
-            },
-            {
-              "expression": "status",
-              "isExpression": false,
-              "asc": true,
-              "nulls": "last"
-            }
-          ],
-          "isUnique": false,
-          "concurrently": false,
-          "method": "btree",
-          "with": {}
-        }
-      },
-      "foreignKeys": {
-        "fundings_request_id_funding_requests_id_fk": {
-          "name": "fundings_request_id_funding_requests_id_fk",
-          "tableFrom": "fundings",
-          "tableTo": "funding_requests",
-          "columnsFrom": [
-            "request_id"
-          ],
-          "columnsTo": [
-            "id"
-          ],
-          "onDelete": "no action",
-          "onUpdate": "no action"
-        },
-        "fundings_investor_id_users_id_fk": {
-          "name": "fundings_investor_id_users_id_fk",
-          "tableFrom": "fundings",
-          "tableTo": "users",
-          "columnsFrom": [
-            "investor_id"
-          ],
-          "columnsTo": [
-            "id"
-          ],
-          "onDelete": "no action",
-          "onUpdate": "no action"
-        }
-      },
-      "compositePrimaryKeys": {},
-      "uniqueConstraints": {},
-      "policies": {},
-      "checkConstraints": {},
-      "isRLSEnabled": false
-    },
-    "public.loan_shares": {
-      "name": "loan_shares",
-      "schema": "",
-      "columns": {
-        "id": {
-          "name": "id",
-          "type": "text",
-          "primaryKey": true,
-          "notNull": true
-        },
-        "loan_id": {
-          "name": "loan_id",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "investor_id": {
-          "name": "investor_id",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "principal_share": {
-          "name": "principal_share",
-          "type": "bigint",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "share_bps": {
-          "name": "share_bps",
-          "type": "integer",
-          "primaryKey": false,
-          "notNull": true
-        }
-      },
-      "indexes": {
-        "idx_shares_loan": {
-          "name": "idx_shares_loan",
-          "columns": [
-            {
-              "expression": "loan_id",
-              "isExpression": false,
-              "asc": true,
-              "nulls": "last"
-            }
-          ],
-          "isUnique": false,
-          "concurrently": false,
-          "method": "btree",
-          "with": {}
-        },
-        "idx_shares_investor": {
-          "name": "idx_shares_investor",
-          "columns": [
-            {
-              "expression": "investor_id",
-              "isExpression": false,
-              "asc": true,
-              "nulls": "last"
-            }
-          ],
-          "isUnique": false,
-          "concurrently": false,
-          "method": "btree",
-          "with": {}
-        }
-      },
-      "foreignKeys": {
-        "loan_shares_loan_id_loans_id_fk": {
-          "name": "loan_shares_loan_id_loans_id_fk",
-          "tableFrom": "loan_shares",
-          "tableTo": "loans",
-          "columnsFrom": [
-            "loan_id"
-          ],
-          "columnsTo": [
-            "id"
-          ],
-          "onDelete": "no action",
-          "onUpdate": "no action"
-        },
-        "loan_shares_investor_id_users_id_fk": {
-          "name": "loan_shares_investor_id_users_id_fk",
-          "tableFrom": "loan_shares",
-          "tableTo": "users",
-          "columnsFrom": [
-            "investor_id"
-          ],
-          "columnsTo": [
-            "id"
-          ],
-          "onDelete": "no action",
-          "onUpdate": "no action"
-        }
-      },
-      "compositePrimaryKeys": {},
-      "uniqueConstraints": {},
-      "policies": {},
-      "checkConstraints": {},
-      "isRLSEnabled": false
-    },
-    "public.loans": {
-      "name": "loans",
-      "schema": "",
-      "columns": {
-        "id": {
-          "name": "id",
-          "type": "text",
-          "primaryKey": true,
-          "notNull": true
-        },
-        "request_id": {
-          "name": "request_id",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "business_id": {
-          "name": "business_id",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "currency": {
-          "name": "currency",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "principal": {
-          "name": "principal",
-          "type": "bigint",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "outstanding_principal": {
-          "name": "outstanding_principal",
-          "type": "bigint",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "accrued_interest": {
-          "name": "accrued_interest",
-          "type": "bigint",
-          "primaryKey": false,
-          "notNull": true,
-          "default": "0"
-        },
-        "paid_interest": {
-          "name": "paid_interest",
-          "type": "bigint",
-          "primaryKey": false,
-          "notNull": true,
-          "default": "0"
-        },
-        "rate_annual_bps": {
-          "name": "rate_annual_bps",
-          "type": "integer",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "term_days": {
-          "name": "term_days",
-          "type": "integer",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "repayment_type": {
-          "name": "repayment_type",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "status": {
-          "name": "status",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true,
-          "default": "'disbursed'"
-        },
-        "disbursed_at": {
-          "name": "disbursed_at",
-          "type": "timestamp with time zone",
-          "primaryKey": false,
-          "notNull": true,
-          "default": "now()"
-        },
-        "accrued_through": {
-          "name": "accrued_through",
-          "type": "timestamp with time zone",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "matures_at": {
-          "name": "matures_at",
-          "type": "timestamp with time zone",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "closed_at": {
-          "name": "closed_at",
-          "type": "timestamp with time zone",
-          "primaryKey": false,
-          "notNull": false
-        }
-      },
-      "indexes": {
-        "idx_loans_business": {
-          "name": "idx_loans_business",
-          "columns": [
-            {
-              "expression": "business_id",
-              "isExpression": false,
-              "asc": true,
-              "nulls": "last"
-            },
-            {
-              "expression": "status",
-              "isExpression": false,
-              "asc": true,
-              "nulls": "last"
-            }
-          ],
-          "isUnique": false,
-          "concurrently": false,
-          "method": "btree",
-          "with": {}
-        }
-      },
-      "foreignKeys": {
-        "loans_request_id_funding_requests_id_fk": {
-          "name": "loans_request_id_funding_requests_id_fk",
-          "tableFrom": "loans",
-          "tableTo": "funding_requests",
-          "columnsFrom": [
-            "request_id"
-          ],
-          "columnsTo": [
-            "id"
-          ],
-          "onDelete": "no action",
-          "onUpdate": "no action"
-        },
-        "loans_business_id_businesses_id_fk": {
-          "name": "loans_business_id_businesses_id_fk",
-          "tableFrom": "loans",
-          "tableTo": "businesses",
-          "columnsFrom": [
-            "business_id"
-          ],
-          "columnsTo": [
-            "id"
-          ],
-          "onDelete": "no action",
-          "onUpdate": "no action"
-        }
-      },
-      "compositePrimaryKeys": {},
-      "uniqueConstraints": {},
-      "policies": {},
-      "checkConstraints": {},
-      "isRLSEnabled": false
-    },
-    "public.repayment_splits": {
-      "name": "repayment_splits",
-      "schema": "",
-      "columns": {
-        "id": {
-          "name": "id",
-          "type": "text",
-          "primaryKey": true,
-          "notNull": true
-        },
-        "repayment_id": {
-          "name": "repayment_id",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "investor_id": {
-          "name": "investor_id",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "principal": {
-          "name": "principal",
-          "type": "bigint",
-          "primaryKey": false,
-          "notNull": true,
-          "default": "0"
-        },
-        "interest": {
-          "name": "interest",
-          "type": "bigint",
-          "primaryKey": false,
-          "notNull": true,
-          "default": "0"
-        },
-        "fee": {
-          "name": "fee",
-          "type": "bigint",
-          "primaryKey": false,
-          "notNull": true,
-          "default": "0"
         },
         "transaction_id": {
           "name": "transaction_id",
@@ -2038,20 +1969,59 @@
           "primaryKey": false,
           "notNull": false
         },
-        "created_at": {
-          "name": "created_at",
+        "declared_at": {
+          "name": "declared_at",
           "type": "timestamp with time zone",
           "primaryKey": false,
           "notNull": true,
           "default": "now()"
+        },
+        "decided_at": {
+          "name": "decided_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "decided_by": {
+          "name": "decided_by",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
         }
       },
       "indexes": {
-        "idx_splits_repayment": {
-          "name": "idx_splits_repayment",
+        "idx_contributions_member": {
+          "name": "idx_contributions_member",
           "columns": [
             {
-              "expression": "repayment_id",
+              "expression": "member_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "declared_at",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
+        "idx_contributions_status": {
+          "name": "idx_contributions_status",
+          "columns": [
+            {
+              "expression": "status",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "declared_at",
               "isExpression": false,
               "asc": true,
               "nulls": "last"
@@ -2064,12 +2034,12 @@
         }
       },
       "foreignKeys": {
-        "repayment_splits_repayment_id_repayments_id_fk": {
-          "name": "repayment_splits_repayment_id_repayments_id_fk",
-          "tableFrom": "repayment_splits",
-          "tableTo": "repayments",
+        "contributions_member_id_business_members_id_fk": {
+          "name": "contributions_member_id_business_members_id_fk",
+          "tableFrom": "contributions",
+          "tableTo": "business_members",
           "columnsFrom": [
-            "repayment_id"
+            "member_id"
           ],
           "columnsTo": [
             "id"
@@ -2077,12 +2047,12 @@
           "onDelete": "no action",
           "onUpdate": "no action"
         },
-        "repayment_splits_investor_id_users_id_fk": {
-          "name": "repayment_splits_investor_id_users_id_fk",
-          "tableFrom": "repayment_splits",
+        "contributions_decided_by_users_id_fk": {
+          "name": "contributions_decided_by_users_id_fk",
+          "tableFrom": "contributions",
           "tableTo": "users",
           "columnsFrom": [
-            "investor_id"
+            "decided_by"
           ],
           "columnsTo": [
             "id"
@@ -2097,8 +2067,8 @@
       "checkConstraints": {},
       "isRLSEnabled": false
     },
-    "public.repayments": {
-      "name": "repayments",
+    "public.member_rates": {
+      "name": "member_rates",
       "schema": "",
       "columns": {
         "id": {
@@ -2107,78 +2077,39 @@
           "primaryKey": true,
           "notNull": true
         },
-        "loan_id": {
-          "name": "loan_id",
+        "member_id": {
+          "name": "member_id",
           "type": "text",
           "primaryKey": false,
           "notNull": true
         },
-        "seq": {
-          "name": "seq",
+        "rate_annual_bps": {
+          "name": "rate_annual_bps",
           "type": "integer",
           "primaryKey": false,
-          "notNull": true
+          "notNull": true,
+          "default": 0
         },
-        "due_at": {
-          "name": "due_at",
+        "effective_from": {
+          "name": "effective_from",
           "type": "timestamp with time zone",
           "primaryKey": false,
-          "notNull": true
-        },
-        "principal_due": {
-          "name": "principal_due",
-          "type": "bigint",
-          "primaryKey": false,
           "notNull": true,
-          "default": "0"
-        },
-        "interest_due": {
-          "name": "interest_due",
-          "type": "bigint",
-          "primaryKey": false,
-          "notNull": true,
-          "default": "0"
-        },
-        "principal_paid": {
-          "name": "principal_paid",
-          "type": "bigint",
-          "primaryKey": false,
-          "notNull": true,
-          "default": "0"
-        },
-        "interest_paid": {
-          "name": "interest_paid",
-          "type": "bigint",
-          "primaryKey": false,
-          "notNull": true,
-          "default": "0"
-        },
-        "status": {
-          "name": "status",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true,
-          "default": "'due'"
-        },
-        "paid_at": {
-          "name": "paid_at",
-          "type": "timestamp with time zone",
-          "primaryKey": false,
-          "notNull": false
+          "default": "now()"
         }
       },
       "indexes": {
-        "idx_repayments_loan": {
-          "name": "idx_repayments_loan",
+        "idx_member_rates_member": {
+          "name": "idx_member_rates_member",
           "columns": [
             {
-              "expression": "loan_id",
+              "expression": "member_id",
               "isExpression": false,
               "asc": true,
               "nulls": "last"
             },
             {
-              "expression": "due_at",
+              "expression": "effective_from",
               "isExpression": false,
               "asc": true,
               "nulls": "last"
@@ -2191,12 +2122,12 @@
         }
       },
       "foreignKeys": {
-        "repayments_loan_id_loans_id_fk": {
-          "name": "repayments_loan_id_loans_id_fk",
-          "tableFrom": "repayments",
-          "tableTo": "loans",
+        "member_rates_member_id_business_members_id_fk": {
+          "name": "member_rates_member_id_business_members_id_fk",
+          "tableFrom": "member_rates",
+          "tableTo": "business_members",
           "columnsFrom": [
-            "loan_id"
+            "member_id"
           ],
           "columnsTo": [
             "id"
@@ -2206,95 +2137,6 @@
         }
       },
       "compositePrimaryKeys": {},
-      "uniqueConstraints": {},
-      "policies": {},
-      "checkConstraints": {},
-      "isRLSEnabled": false
-    },
-    "public.balance_snapshots": {
-      "name": "balance_snapshots",
-      "schema": "",
-      "columns": {
-        "user_id": {
-          "name": "user_id",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "date": {
-          "name": "date",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "currency": {
-          "name": "currency",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "kind": {
-          "name": "kind",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "amount": {
-          "name": "amount",
-          "type": "bigint",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "amount_base": {
-          "name": "amount_base",
-          "type": "bigint",
-          "primaryKey": false,
-          "notNull": true,
-          "default": "0"
-        },
-        "created_at": {
-          "name": "created_at",
-          "type": "timestamp with time zone",
-          "primaryKey": false,
-          "notNull": true,
-          "default": "now()"
-        }
-      },
-      "indexes": {
-        "idx_snapshots_user_date": {
-          "name": "idx_snapshots_user_date",
-          "columns": [
-            {
-              "expression": "user_id",
-              "isExpression": false,
-              "asc": true,
-              "nulls": "last"
-            },
-            {
-              "expression": "date",
-              "isExpression": false,
-              "asc": true,
-              "nulls": "last"
-            }
-          ],
-          "isUnique": false,
-          "concurrently": false,
-          "method": "btree",
-          "with": {}
-        }
-      },
-      "foreignKeys": {},
-      "compositePrimaryKeys": {
-        "balance_snapshots_user_id_date_currency_kind_pk": {
-          "name": "balance_snapshots_user_id_date_currency_kind_pk",
-          "columns": [
-            "user_id",
-            "date",
-            "currency",
-            "kind"
-          ]
-        }
-      },
       "uniqueConstraints": {},
       "policies": {},
       "checkConstraints": {},

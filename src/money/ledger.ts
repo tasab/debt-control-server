@@ -8,7 +8,7 @@ import {
 import { db } from '../db/index.ts'
 import { AppError, errors } from '../errors.ts'
 import { newId } from './amount.ts'
-import { NON_NEGATIVE_KINDS } from './accounts.ts'
+import { NON_NEGATIVE_KINDS, NON_POSITIVE_KINDS } from './accounts.ts'
 import type {
   DbOrTx,
   LedgerEntryInput,
@@ -32,7 +32,8 @@ interface AccountState {
  * Guarantees, all inside one SQL transaction:
  *   1. Σ amount === 0 per currency (money is neither created nor destroyed);
  *   2. accounts are locked FOR UPDATE in id order (no deadlock, no double spend);
- *   3. wallet/hold/register balances never go negative;
+ *   3. wallet/hold/register balances never go negative, and a member's claim
+ *      never goes positive (both directions of the same rule);
  *   4. a repeated Idempotency-Key returns the original transactionId instead of
  *      posting a second time;
  *   5. account_balances moves with the entries, never in a follow-up write.
@@ -151,6 +152,14 @@ async function postWithin(
         accountId,
       })
     }
+    // Зобов'язання перевіряється з другого боку: борг перед учасником не може
+    // стати від'ємним боргом, тобто учасник не може забрати більше, ніж має.
+    if (NON_POSITIVE_KINDS.has(account.kind) && account.balance > 0n) {
+      throw errors.insufficientFunds({
+        amount: `недостатньо ${account.currency} на рахунку учасника`,
+        accountId,
+      })
+    }
   }
 
   // Write. A concurrent request with the same key loses the unique-index race
@@ -184,7 +193,6 @@ async function postWithin(
       entryType: entry.entryType ?? type,
       comment: entry.comment ?? null,
       counterpartyId: entry.counterpartyId ?? null,
-      relatedLoanId: entry.relatedLoanId ?? null,
     })),
   )
 

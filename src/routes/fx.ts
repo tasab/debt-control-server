@@ -1,5 +1,12 @@
 import { z } from 'zod'
-import { currentRates, execute, formatRate, quote } from '../fx/service.ts'
+import {
+  currentRates,
+  execute,
+  formatRate,
+  MANUAL_SOURCE,
+  quote,
+  setManualRate,
+} from '../fx/service.ts'
 import { amountString, currencyCode } from '../validation/common.ts'
 import { idempotencyKeyOf } from '../idempotency.ts'
 import { iso, money } from '../serialize.ts'
@@ -12,6 +19,15 @@ const quoteSchema = z.object({
 })
 
 const executeSchema = z.object({ quoteId: z.string().min(1) })
+
+// Курс приходить як людина його пише: «44.2». Дробову частину бере parseRate.
+const rateString = z.string().regex(/^\d+(\.\d+)?$/, 'напр. 44.20')
+
+const manualRateSchema = z.object({
+  quote: currencyCode,
+  bid: rateString,
+  sell: rateString,
+})
 
 const serializeQuote = (q: Record<string, any>) => ({
   quoteId: q.id,
@@ -33,7 +49,23 @@ export default async function fxRoutes(fastify: FastifyInstance) {
       sell: formatRate(r.sell),
       observedAt: iso(r.observedAt),
       isStale: r.isStale,
+      // Свій курс чи зі стрічки — видно в інтерфейсі, щоб не гадати, чому
+      // цифра не та, яку виставляли.
+      isManual: r.sourceId === MANUAL_SOURCE,
     }))
+  })
+
+  // Власні курси обмінника. Перемагають стрічку й не старіють.
+  fastify.put('/fx/rates', { preHandler: fastify.guard(['admin']) }, async (request) => {
+    const body = manualRateSchema.parse(request.body)
+    const row = await setManualRate(body)
+    return {
+      code: row.quote,
+      bid: formatRate(row.bid),
+      sell: formatRate(row.sell),
+      observedAt: iso(row.observedAt),
+      isManual: true,
+    }
   })
 
   fastify.post('/fx/quote', { preHandler: fastify.authenticate }, async (request) => {

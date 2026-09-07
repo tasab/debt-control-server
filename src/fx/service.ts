@@ -1,6 +1,6 @@
 import { and, desc, eq, isNull, sql } from 'drizzle-orm'
 import { db } from '../db/index.ts'
-import { currencies, exchangeRates, fxQuotes } from '../../db/schema/index.ts'
+import { currencies, exchangeRates, fxQuotes, rateSources } from '../../db/schema/index.ts'
 import { config } from '../config.ts'
 import { errors } from '../errors.ts'
 import { divFloor, newId, parseAmount } from '../money/amount.ts'
@@ -30,7 +30,19 @@ export const formatRate = (value: bigint): string => {
 
 const pow10 = (n: number) => 10n ** BigInt(n)
 
-/** Newest quote per currency, plus staleness — the UI shows a badge for it. */
+/** Джерело курсів, які виставив власник руками. */
+export const MANUAL_SOURCE = 'manual'
+
+/**
+ * Актуальний курс кожної валюти.
+ *
+ * Ручний курс завжди перемагає стрічку. Для обмінника це не деталь, а суть:
+ * власні виставлені курси — і є правда, а агрегатор лише орієнтир. Інакше
+ * нічне оновлення щочверть години затирало б те, що людина ввела вручну.
+ *
+ * Ручний курс не старіє: він діє, доки його не змінили, тож позначка
+ * «застарілий» до нього не застосовується.
+ */
 export async function currentRates(
   tx: DbOrTx = db,
 ): Promise<Array<ExchangeRate & { isStale: boolean }>> {
@@ -40,13 +52,20 @@ export async function currentRates(
     .where(eq(exchangeRates.base, config.baseCurrency))
     .orderBy(desc(exchangeRates.observedAt))
 
-  const newest = new Map<string, ExchangeRate>()
-  for (const row of rows) if (!newest.has(row.quote)) newest.set(row.quote, row)
+  const manual = new Map<string, ExchangeRate>()
+  const feed = new Map<string, ExchangeRate>()
+  for (const row of rows) {
+    const bucket = row.sourceId === MANUAL_SOURCE ? manual : feed
+    if (!bucket.has(row.quote)) bucket.set(row.quote, row)
+  }
 
   const staleAfter = config.fx.staleAfterMinutes * 60 * 1000
-  return [...newest.values()].map((row) => ({
+  const chosen = new Map<string, ExchangeRate>([...feed, ...manual])
+  return [...chosen.values()].map((row) => ({
     ...row,
-    isStale: Date.now() - new Date(row.observedAt).getTime() > staleAfter,
+    isStale:
+      row.sourceId !== MANUAL_SOURCE &&
+      Date.now() - new Date(row.observedAt).getTime() > staleAfter,
   }))
 }
 
@@ -273,12 +292,72 @@ export async function execute({
  * jump beyond FX_MAX_JUMP_BPS versus the last accepted value. A bad feed row is
  * logged and skipped, never applied (PLATFORM_PLAN §3.3).
  */
+/**
+ * Курс, виставлений вручну.
+ *
+ * Пишеться новим рядком, як і будь-яка котирувка: історія курсів — це факти,
+ * а не поточне значення, тож «за яким курсом рахувалося в середу» лишається
+ * відповідним питанням.
+ */
+export async function setManualRate({
+  quote,
+  bid,
+  sell,
+}: {
+  quote: string
+  bid: string
+  sell: string
+}): Promise<ExchangeRate> {
+  if (quote === config.baseCurrency) {
+    throw errors.validation('Базова валюта не має курсу до себе', { quote })
+  }
+  const known = await exponents()
+  if (!known.has(quote)) throw errors.notFound('Валюту')
+
+  const bidValue = parseRate(bid)
+  const sellValue = parseRate(sell)
+  if (!(bidValue > 0n)) {
+    throw errors.validation('Курс купівлі має бути більшим за нуль', { bid: 'мін. 0.000001' })
+  }
+  if (!(sellValue >= bidValue)) {
+    throw errors.validation('Продаж не може бути дешевшим за купівлю', { sell: 'має бути ≥ купівлі' })
+  }
+
+  await db
+    .insert(rateSources)
+    .values({ id: MANUAL_SOURCE, name: 'Власні курси', priority: 0 })
+    .onConflictDoNothing()
+
+  const [row] = await db
+    .insert(exchangeRates)
+    .values({
+      id: newId('rate'),
+      sourceId: MANUAL_SOURCE,
+      base: config.baseCurrency,
+      quote,
+      bid: bidValue,
+      sell: sellValue,
+    })
+    .returning()
+  return row!
+}
+
 export async function ingestRates(
   rates: Array<{ code: string; bid: string; sell: string }>,
   { sourceId, log = console }: { sourceId: string; log?: Partial<Console> },
 ): Promise<ExchangeRate[]> {
   const accepted: ExchangeRate[] = []
+  // A live feed quotes more currencies than the platform supports. Unknown
+  // codes are skipped here — exchange_rates.quote references currencies.code,
+  // so letting one through would fail the whole refresh over a currency nobody
+  // can hold anyway.
+  const known = await exponents()
+
   for (const raw of rates) {
+    if (raw.code === config.baseCurrency || !known.has(raw.code)) {
+      log.debug?.({ code: raw.code }, 'fx: skipped — currency not supported')
+      continue
+    }
     const bid = parseRate(raw.bid)
     const sell = parseRate(raw.sell)
     if (!(sell > bid && bid > 0n)) {

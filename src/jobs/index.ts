@@ -1,6 +1,3 @@
-import { accrueInterest } from '../domain/loans.ts'
-import { settleExpiredRequests } from '../domain/requests.ts'
-import { writeSnapshots } from '../domain/stats.ts'
 import { startRateJob } from '../fx/job.ts'
 import { reconcile } from './reconcile.ts'
 
@@ -31,9 +28,6 @@ export function startJobs(log: JobLogger = console) {
   }
 
   timers.push(startRateJob(log))
-  every(6 * HOUR, 'accrual', (l: JobLogger) => accrueInterest(new Date(), l))
-  every(HOUR, 'request-expiry', (l: JobLogger) => settleExpiredRequests(l))
-  every(24 * HOUR, 'snapshots', (l: JobLogger) => writeSnapshots(new Date(), l))
   every(24 * HOUR, 'reconcile', (l: JobLogger) => reconcile(l))
 
   log.info?.('jobs: started')
