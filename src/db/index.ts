@@ -2,16 +2,17 @@ import 'dotenv/config'
 import pg from 'pg'
 import { drizzle } from 'drizzle-orm/node-postgres'
 import * as schema from '../../db/schema/index.ts'
+import { assertConfig, config } from '../config.ts'
 
 // Single pg connection pool + Drizzle client for the whole server. Schema lives
 // in ../../db/schema; migrations are applied separately (npm run db:migrate).
-const connectionString = process.env.DATABASE_URL
-if (!connectionString) {
-  throw new Error(
-    'DATABASE_URL is not set. Copy server/.env.example to server/.env ' +
-      '(and run `docker compose up -d` for a local Postgres).',
-  )
-}
+//
+// Перевірка стоїть тут, а не тільки в index.ts: імпорти обчислюються раніше за
+// тіло модуля, тож цей файл — реально перше місце, куди доходить керування, і
+// саме його повідомлення бачить той, хто читає логи деплою.
+assertConfig()
+
+const connectionString = config.databaseUrl!
 
 const { Pool } = pg
 

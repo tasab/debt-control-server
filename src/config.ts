@@ -49,11 +49,33 @@ export const config = {
   },
 }
 
+/**
+ * Одна перевірка на весь запуск — і одне повідомлення з усім, чого бракує.
+ *
+ * Раніше DATABASE_URL перевірявся в db/index.ts, а JWT_SECRET — тут, і що
+ * гірше, модуль бази обчислюється раніше за тіло index.ts, тож до перевірки
+ * секрету справа не доходила взагалі. На хостингу це означало два деплої
+ * поспіль: полагодив одну змінну — впав на наступній.
+ *
+ * Порада теж залежить від того, де це сталося: у контейнері «скопіюйте
+ * .env.example» — марна витрата уваги, там змінні задає панель хостингу.
+ */
 export function assertConfig() {
-  if (!config.databaseUrl) {
-    throw new Error('DATABASE_URL is not set (copy server/.env.example to server/.env)')
-  }
-  if (config.isProduction && config.jwtSecret.startsWith('dev-only')) {
-    throw new Error('JWT_SECRET must be set in production')
-  }
+  const missing: string[] = []
+
+  if (!config.databaseUrl) missing.push('DATABASE_URL')
+  if (config.isProduction && config.jwtSecret.startsWith('dev-only')) missing.push('JWT_SECRET')
+
+  if (missing.length === 0) return
+
+  // NODE_ENV=production — ознака хостингу; локально його немає.
+  const hint = config.isProduction
+    ? 'Задайте ці змінні в налаштуваннях сервісу. На Railway база дає свій ' +
+      'DATABASE_URL: у змінних застосунку пропишіть посилання ' +
+      'DATABASE_URL=${{Postgres.DATABASE_URL}}, а JWT_SECRET згенеруйте ' +
+      '(`openssl rand -base64 32`) — на дефолтному сервер працювати відмовиться.'
+    : 'Скопіюйте server/.env.example у server/.env і підніміть базу: ' +
+      '`docker compose up -d`.'
+
+  throw new Error(`Не задано: ${missing.join(', ')}. ${hint}`)
 }
