@@ -1,7 +1,7 @@
 import 'dotenv/config'
 import { hash } from '@node-rs/argon2'
-import { sql } from 'drizzle-orm'
 import { db, pool } from '../../src/db/index.ts'
+import { and, eq, isNull, sql } from 'drizzle-orm'
 import { currencies, feePolicies, rateSources, users } from '../schema/index.ts'
 import { config } from '../../src/config.ts'
 import { newId } from '../../src/money/amount.ts'
@@ -20,8 +20,13 @@ import { refreshRates } from '../../src/fx/job.ts'
  * адмін тут не зручність, а єдиний спосіб узагалі почати: зареєстрований
  * самотужки користувач такого права не має.
  *
- * Прогін безпечний повторно: усі вставки — upsert, і другий запуск лише
- * приводить довідники та адміна до описаного тут стану.
+ * Прогін безпечний повторно, і це не зручність, а вимога: сід стоїть у
+ * команді старту (railway.json), тобто виконується на кожен деплой.
+ *
+ * Тому довідники — upsert (сходяться до описаного тут стану), а адмін
+ * створюється лише тоді, коли адміна немає взагалі. Інакше кожен деплой
+ * мовчки скидав би пароль на той, що лежить у змінних, — і зміна пароля в
+ * додатку жила б рівно до наступного пушу.
  */
 
 // Порядок — за частотою: гривня, три ходові валюти, далі решта. Він задає
@@ -102,30 +107,37 @@ async function main() {
     ])
     .onConflictDoNothing()
 
-  const { password, ...person } = ADMIN
-  const passwordHash = await hash(password)
-  const [admin] = await db
-    .insert(users)
-    .values({ id: newId('usr'), passwordHash, ...person })
-    .onConflictDoUpdate({
-      target: users.email,
-      set: {
-        passwordHash,
-        displayName: person.displayName,
-        capabilities: person.capabilities,
-        isAdmin: true,
-        deletedAt: null,
-      },
-    })
-    .returning()
+  // Адмін — лише перший раз. Наявність будь-якого адміна означає, що система
+  // вже комусь належить, і сід у це не втручається.
+  const [existingAdmin] = await db
+    .select({ id: users.id })
+    .from(users)
+    .where(and(eq(users.isAdmin, true), isNull(users.deletedAt)))
+    .limit(1)
 
-  // Рахунки під кожну валюту заводяться одразу: інакше перше поповнення
-  // впиралося б у відсутній рахунок замість того, щоб просто пройти.
-  for (const currency of CURRENCIES) await userWallet(admin!.id, currency.code)
+  if (existingAdmin) {
+    console.log('Адмін уже є — акаунт не чіпаємо.')
+  } else {
+    const { password, ...person } = ADMIN
+    const passwordHash = await hash(password)
+    const [admin] = await db
+      .insert(users)
+      .values({ id: newId('usr'), passwordHash, ...person })
+      .onConflictDoUpdate({
+        target: users.email,
+        set: { passwordHash, isAdmin: true, deletedAt: null },
+      })
+      .returning()
+
+    // Рахунки під кожну валюту заводяться одразу: інакше перше поповнення
+    // впиралося б у відсутній рахунок замість того, щоб просто пройти.
+    for (const currency of CURRENCIES) await userWallet(admin!.id, currency.code)
+    console.log(`Створено адміна ${ADMIN.email}`)
+  }
 
   await refreshRates(console)
 
-  console.log(`Seeded. Log in as ${ADMIN.email} / ${password} (адмін)`)
+  console.log('Seed done.')
 }
 
 await main()
