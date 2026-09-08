@@ -1,7 +1,12 @@
 import { transfer, topUp } from '../domain/transfers.ts'
 import { previewFee } from '../money/fees.ts'
 import { parseAmount } from '../money/amount.ts'
-import { feePreviewSchema, topUpSchema, transferSchema } from '../validation/transfers.ts'
+import {
+  feePreviewSchema,
+  selfTopUpSchema,
+  topUpSchema,
+  transferSchema,
+} from '../validation/transfers.ts'
 import { money } from '../serialize.ts'
 import { idempotencyKeyOf } from '../idempotency.ts'
 import type { FastifyInstance } from 'fastify'
@@ -34,6 +39,26 @@ export default async function transferRoutes(fastify: FastifyInstance) {
       received: money(quote.received),
       payer: quote.payer,
     }
+  })
+
+  /**
+   * Своє поповнення: людина записує власні кошти сама, без адміністратора.
+   *
+   * Чужий рахунок назвати нема як — id береться із сесії, а не з тіла запиту,
+   * тож цей ендпоінт не дає покласти гроші комусь іншому навіть навмисне.
+   * У виписці проводка має власний тип (`self_topup`), і видно, що суму вписав
+   * власник рахунку, а не адміністратор.
+   */
+  fastify.post('/topups', { preHandler: fastify.authenticate }, async (request, reply) => {
+    const body = selfTopUpSchema.parse(request.body)
+    const result = await topUp({
+      adminId: request.user.id,
+      userId: request.user.id,
+      ...body,
+      self: true,
+      idempotencyKey: idempotencyKeyOf(request),
+    })
+    return reply.code(result.replayed ? 200 : 201).send({ transactionId: result.transactionId })
   })
 
   fastify.post(

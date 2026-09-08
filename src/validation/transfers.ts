@@ -20,3 +20,10 @@ export const topUpSchema = z.object({
   amount: amountString,
   comment,
 })
+
+// Своє поповнення: чужий рахунок назвати нема як — id береться із сесії.
+export const selfTopUpSchema = z.object({
+  currency: currencyCode,
+  amount: amountString,
+  comment,
+})

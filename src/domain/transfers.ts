@@ -126,6 +126,13 @@ export async function transfer(
  * Admin top-up (D1): the only legal way money enters the system, and it is
  * still balanced — `external` goes negative by exactly what the wallet gains.
  */
+/**
+ * Гроші заходять у реєстр (D1). Два випадки, одна проводка.
+ *
+ * `self` — людина записала власні кошти сама. Рух той самий (external →
+ * гаманець), але тип проводки інший, тож у виписці завжди видно, звідки саме
+ * взялася сума: провів адміністратор чи вписав власник рахунку.
+ */
 export async function topUp({
   adminId,
   userId,
@@ -133,6 +140,7 @@ export async function topUp({
   amount,
   comment,
   idempotencyKey,
+  self = false,
 }: {
   adminId: string
   userId: string
@@ -140,6 +148,7 @@ export async function topUp({
   amount: string
   comment?: string
   idempotencyKey?: string | null
+  self?: boolean
 }) {
   const value = parseAmount(amount)
   if (value <= 0n) throw errors.validation('Сума має бути більшою за нуль', { amount: 'мін. 0.01' })
@@ -151,20 +160,21 @@ export async function topUp({
     const wallet = await userWallet(userId, currency, tx)
     const external = await externalAccount(currency, tx)
 
+    const entryType = self ? 'self_topup' : 'topup'
     const posted = await postTransaction(
       {
-        type: 'topup',
+        type: self ? 'self_topup' : 'topup',
         idempotencyKey,
         actorId: adminId,
-        meta: { userId, currency },
+        meta: { userId, currency, self },
         entries: [
-          { accountId: external.id, currency, amount: -value, entryType: 'topup' },
+          { accountId: external.id, currency, amount: -value, entryType },
           {
             accountId: wallet.id,
             currency,
             amount: value,
-            entryType: 'topup',
-            comment: comment ?? 'поповнення',
+            entryType,
+            comment: comment ?? (self ? 'власні кошти' : 'поповнення'),
           },
         ],
       },
