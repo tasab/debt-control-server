@@ -1,5 +1,6 @@
 import { randomBytes } from 'node:crypto'
 import { and, desc, eq, isNull, sql } from 'drizzle-orm'
+import { alias } from 'drizzle-orm/pg-core'
 import { db } from '../db/index.ts'
 import { balanceShares, users } from '../../db/schema/index.ts'
 import { newId } from '../money/amount.ts'
@@ -26,23 +27,49 @@ const newToken = () => randomBytes(TOKEN_BYTES).toString('base64url')
 const invalidLink = () =>
   new AppError('NOT_FOUND', 'Посилання недійсне або відкликане', { status: 404 })
 
-/** Усі посилання власника, свіжі згори. Відкликані лишаються у списку. */
+/**
+ * Усі посилання на баланс однієї людини, свіжі згори. Відкликані лишаються у
+ * списку: «його відкликали такого-то числа» краще за порожнечу.
+ *
+ * Разом із рядком їде імʼя того, хто його створив, — власник має бачити, що
+ * посилання на його баланс зробив адміністратор, а не він сам.
+ */
 export async function listShares(userId: string) {
+  const author = alias(users, 'author')
   return db
-    .select()
+    .select({
+      id: balanceShares.id,
+      token: balanceShares.token,
+      viewCount: balanceShares.viewCount,
+      lastViewedAt: balanceShares.lastViewedAt,
+      revokedAt: balanceShares.revokedAt,
+      createdAt: balanceShares.createdAt,
+      createdBy: balanceShares.createdBy,
+      createdByName: author.displayName,
+    })
     .from(balanceShares)
+    .leftJoin(author, eq(author.id, balanceShares.createdBy))
     .where(eq(balanceShares.userId, userId))
     .orderBy(desc(balanceShares.createdAt))
 }
 
-export async function createShare(userId: string, { label }: { label?: string } = {}) {
+/**
+ * Створення — без жодного поля: натиснув і маєш посилання.
+ *
+ * Тут колись був підпис «для себе», але заповнювати його щоразу заради того,
+ * щоб поділитися балансом, — робота, якої ніхто не просив.
+ *
+ * `createdBy` відрізняється від `userId` рівно тоді, коли посилання на чужий
+ * баланс зробив адміністратор.
+ */
+export async function createShare(userId: string, { createdBy }: { createdBy?: string } = {}) {
   const [row] = await db
     .insert(balanceShares)
     .values({
       id: newId('shr'),
       userId,
       token: newToken(),
-      label: label?.trim() || null,
+      createdBy: createdBy ?? userId,
     })
     .returning()
   return row
@@ -51,6 +78,10 @@ export async function createShare(userId: string, { label }: { label?: string } 
 /**
  * Відкликання, а не видалення: рядок лишається, і посилання починає віддавати
  * 404 назавжди. Повторне відкликання нічого не змінює й не є помилкою.
+ *
+ * `userId` — власник балансу, а не той, хто натиснув: посилання, створене
+ * адміністратором, має відкликатися і з боку людини, чий це баланс. Інакше
+ * вона бачила б у себе запис, якого не може прибрати.
  */
 export async function revokeShare(userId: string, id: string) {
   const [row] = await db

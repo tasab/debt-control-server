@@ -15,6 +15,20 @@
       "when": 1788808979007,
       "tag": "0001_ledger_guard",
       "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "7",
+      "when": 1789661692424,
+      "tag": "0002_share_author",
+      "breakpoints": true
+    },
+    {
+      "idx": 3,
+      "version": "7",
+      "when": 1789661702926,
+      "tag": "0003_drop_share_label",
+      "breakpoints": true
     }
   ]
 }

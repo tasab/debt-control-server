@@ -90,9 +90,10 @@ export const balanceShares = pgTable(
     // 128 біт випадковості в base64url. Токен — єдине, що захищає сторінку,
     // тож він має бути незгадуваним, а не коротким.
     token: text('token').notNull(),
-    // Підпис для себе: «для банку», «Петрові». Хто відкриє посилання, його не
-    // бачить — це нотатка власника, а не заголовок сторінки.
-    label: text('label'),
+    // Хто створив. Зазвичай сам власник, але адміністратор теж може поширити
+    // чужий баланс — і тоді в списку власника має бути видно, звідки взявся
+    // запис, якого він не робив. NULL — посилання, створені до цієї колонки.
+    createdBy: text('created_by').references(() => users.id),
     viewCount: integer('view_count').notNull().default(0),
     lastViewedAt: timestamp('last_viewed_at', { withTimezone: true }),
     revokedAt: timestamp('revoked_at', { withTimezone: true }),

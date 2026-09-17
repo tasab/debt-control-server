@@ -1,0 +1,2 @@
+ALTER TABLE "balance_shares" ADD COLUMN "created_by" text;--> statement-breakpoint
+ALTER TABLE "balance_shares" ADD CONSTRAINT "balance_shares_created_by_users_id_fk" FOREIGN KEY ("created_by") REFERENCES "public"."users"("id") ON DELETE no action ON UPDATE no action;

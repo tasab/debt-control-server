@@ -1,0 +1,1 @@
+ALTER TABLE "balance_shares" DROP COLUMN "label";
