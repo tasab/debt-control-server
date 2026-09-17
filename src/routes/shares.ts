@@ -54,6 +54,9 @@ export default async function shareRoutes(fastify: FastifyInstance) {
         displayName: data.displayName,
         baseCurrency: data.baseCurrency,
         netWorth: money(data.netWorth),
+        onWallets: money(data.onWallets),
+        invested: money(data.invested),
+        borrowed: money(data.borrowed),
         wallets: data.wallets.map(serializeWallet),
         generatedAt: iso(data.generatedAt),
       }

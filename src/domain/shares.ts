@@ -5,7 +5,7 @@ import { balanceShares, users } from '../../db/schema/index.ts'
 import { newId } from '../money/amount.ts'
 import { AppError, errors } from '../errors.ts'
 import { walletsForUser } from '../money/balances.ts'
-import { valuationTable } from '../money/valuation.ts'
+import { summary } from './stats.ts'
 
 /**
  * Публічні посилання на власний баланс.
@@ -87,11 +87,13 @@ export async function viewShare(token: string) {
     .limit(1)
   if (!owner) throw invalidLink()
 
-  const { toBase, base } = await valuationTable()
+  // Чиста вартість береться з того самого summary(), що й на гаманці власника.
+  // Тут колись підсумовувалися лише гаманці — і в людини, яка віддала всі
+  // кошти в бізнес, посилання показувало нуль: гроші нікуди не зникли, просто
+  // лежали не там, де їх шукав цей підрахунок. Другого визначення «скільки в
+  // мене всього» бути не повинно.
+  const totals = await summary(share.userId)
   const wallets = await walletsForUser(share.userId)
-
-  let netWorth = 0n
-  for (const wallet of wallets) netWorth += toBase(wallet.available, wallet.currency)
 
   await db
     .update(balanceShares)
@@ -103,8 +105,13 @@ export async function viewShare(token: string) {
 
   return {
     displayName: owner.displayName,
-    baseCurrency: base,
-    netWorth,
+    baseCurrency: totals.baseCurrency,
+    netWorth: totals.netWorth,
+    // Розклад: інакше велике число нічим не пояснене, а коли гаманці порожні,
+    // бо все віддано в бізнес, сторінка виглядала б як помилка.
+    onWallets: totals.wallets,
+    invested: totals.invested,
+    borrowed: totals.borrowed,
     // Порожні гаманці не показуються: перелік нулів нічого не додає, а сторінку
     // робить довшою за те єдине число, заради якого її відкрили.
     wallets: wallets.filter((wallet) => wallet.available > 0n),
