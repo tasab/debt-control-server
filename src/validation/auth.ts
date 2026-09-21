@@ -12,6 +12,8 @@ export const loginSchema = z.object({
   password: z.string().min(1, 'введіть пароль'),
 })
 
+// Порожній запит — не помилка, а «покажи всіх»: список отримувачів у переказі
+// не шукають, з нього вибирають.
 export const searchSchema = z.object({
-  q: z.string().trim().min(2, 'мінімум 2 символи'),
+  q: z.string().trim().default(''),
 })

@@ -174,12 +174,15 @@ export async function logout(sessionId: string): Promise<void> {
 export async function searchUsers({
   query,
   excludeUserId,
-  limit = 10,
+  limit = 50,
 }: {
   query: string
   excludeUserId?: string
   limit?: number
 }) {
+  // Без запиту повертається весь список — це той самий набір людей, який
+  // однаково знайшовся б пошуком по двох літерах, тож нічого нового назовні
+  // не виходить, зате отримувача можна просто вибрати зі списку.
   const term = `%${query.trim()}%`
   const rows = await db
     .select({ id: users.id, displayName: users.displayName, email: users.email })
@@ -188,9 +191,10 @@ export async function searchUsers({
       and(
         isNull(users.deletedAt),
         excludeUserId ? ne(users.id, excludeUserId) : sql`true`,
-        or(ilike(users.displayName, term), ilike(users.email, term)),
+        query.trim() ? or(ilike(users.displayName, term), ilike(users.email, term)) : sql`true`,
       ),
     )
+    .orderBy(users.displayName)
     .limit(limit)
 
   // Email is masked: enough to disambiguate two people with the same name,
