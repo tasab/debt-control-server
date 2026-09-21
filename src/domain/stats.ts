@@ -147,8 +147,22 @@ export async function summary(userId: string) {
   const { toBase, base } = await valuationTable()
   const wallets = await walletsForUser(userId)
 
+  // Той самий підрахунок, але без переведення в базову: людина тримає гроші в
+  // тих валютах, у яких тримає, і «скільки в мене доларів» — питання, на яке
+  // сума в гривні не відповідає.
+  const byCurrency = new Map<string, { wallets: Money; invested: Money; borrowed: Money }>()
+  const put = (currency: string, key: 'wallets' | 'invested' | 'borrowed', amount: Money) => {
+    if (amount === 0n) return
+    const row = byCurrency.get(currency) ?? { wallets: 0n, invested: 0n, borrowed: 0n }
+    row[key] += amount
+    byCurrency.set(currency, row)
+  }
+
   let walletBase = 0n
-  for (const wallet of wallets) walletBase += toBase(wallet.available, wallet.currency)
+  for (const wallet of wallets) {
+    walletBase += toBase(wallet.available, wallet.currency)
+    put(wallet.currency, 'wallets', wallet.available)
+  }
 
   // Вкладено: борг усіх бізнесів, у яких людина є активним учасником.
   const memberships = await db
@@ -160,6 +174,7 @@ export async function summary(userId: string) {
   for (const membership of memberships) {
     for (const row of await claimBalances(membership.id)) {
       investedBase += toBase(row.balance, row.currency)
+      put(row.currency, 'invested', row.balance)
     }
   }
 
@@ -170,7 +185,11 @@ export async function summary(userId: string) {
     .from(businesses)
     .where(eq(businesses.ownerUserId, userId))
     .limit(1)
-  if (business) borrowedBase = (await liabilitiesOf(business.id)).total
+  if (business) {
+    const liabilities = await liabilitiesOf(business.id)
+    borrowedBase = liabilities.total
+    for (const [currency, owed] of liabilities.byCurrency) put(currency, 'borrowed', owed)
+  }
 
   return {
     baseCurrency: base,
@@ -178,6 +197,14 @@ export async function summary(userId: string) {
     invested: investedBase,
     borrowed: borrowedBase,
     netWorth: walletBase + investedBase - borrowedBase,
+    byCurrency: [...byCurrency]
+      .map(([currency, row]) => ({
+        currency,
+        ...row,
+        total: row.wallets + row.invested - row.borrowed,
+      }))
+      .filter((row) => row.total !== 0n)
+      .sort((a, b) => a.currency.localeCompare(b.currency)),
   }
 }
 
