@@ -1,9 +1,10 @@
-import { transfer, topUp } from '../domain/transfers.ts'
+import { transfer, topUp, withdrawSelf } from '../domain/transfers.ts'
 import { previewFee } from '../money/fees.ts'
 import { parseAmount } from '../money/amount.ts'
 import {
   feePreviewSchema,
   selfTopUpSchema,
+  selfWithdrawalSchema,
   topUpSchema,
   transferSchema,
 } from '../validation/transfers.ts'
@@ -56,6 +57,23 @@ export default async function transferRoutes(fastify: FastifyInstance) {
       userId: request.user.id,
       ...body,
       self: true,
+      idempotencyKey: idempotencyKeyOf(request),
+    })
+    return reply.code(result.replayed ? 200 : 201).send({ transactionId: result.transactionId })
+  })
+
+  /**
+   * Зняти власні кошти — дзеркало `/topups`.
+   *
+   * Гроші виходять із реєстру, і у виписці це окремий тип (`self_withdrawal`),
+   * а не від'ємне поповнення. Більше за доступне зняти не вийде: журнал не
+   * дає гаманцю піти в мінус.
+   */
+  fastify.post('/withdrawals', { preHandler: fastify.authenticate }, async (request, reply) => {
+    const body = selfWithdrawalSchema.parse(request.body)
+    const result = await withdrawSelf({
+      userId: request.user.id,
+      ...body,
       idempotencyKey: idempotencyKeyOf(request),
     })
     return reply.code(result.replayed ? 200 : 201).send({ transactionId: result.transactionId })

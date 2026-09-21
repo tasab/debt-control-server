@@ -27,3 +27,6 @@ export const selfTopUpSchema = z.object({
   amount: amountString,
   comment,
 })
+
+// Зняття власних коштів — те саме тіло, той самий рахунок із сесії.
+export const selfWithdrawalSchema = selfTopUpSchema

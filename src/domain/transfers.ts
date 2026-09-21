@@ -199,3 +199,66 @@ export async function topUp({
     return posted
   })
 }
+
+/**
+ * Зняти власні кошти з гаманця (дзеркало `self_topup`).
+ *
+ * Гроші виходять із реєстру тим самим шляхом, яким заходили: гаманець →
+ * `external`, одна збалансована проводка. Рахунок береться із сесії, тож
+ * зняти можна лише в себе, а від'ємним баланс не стане — за цим стежить
+ * сам журнал (`NON_NEGATIVE_KINDS`). Заморожені кошти не рухаються: вони
+ * лежать окремим рахунком і в доступних не враховані.
+ */
+export async function withdrawSelf({
+  userId,
+  currency,
+  amount,
+  comment,
+  idempotencyKey,
+}: {
+  userId: string
+  currency: string
+  amount: string
+  comment?: string
+  idempotencyKey?: string | null
+}) {
+  const value = parseAmount(amount)
+  if (value <= 0n) throw errors.validation('Сума має бути більшою за нуль', { amount: 'мін. 0.01' })
+
+  return db.transaction(async (tx) => {
+    const wallet = await userWallet(userId, currency, tx)
+    const external = await externalAccount(currency, tx)
+
+    const posted = await postTransaction(
+      {
+        type: 'self_withdrawal',
+        idempotencyKey,
+        actorId: userId,
+        meta: { userId, currency, self: true },
+        entries: [
+          {
+            accountId: wallet.id,
+            currency,
+            amount: -value,
+            entryType: 'self_withdrawal',
+            comment: comment ?? 'знято вами',
+          },
+          { accountId: external.id, currency, amount: value, entryType: 'self_withdrawal' },
+        ],
+      },
+      tx,
+    )
+
+    if (!posted.replayed) {
+      await tx.insert(auditLog).values({
+        id: newId('aud'),
+        actorId: userId,
+        action: 'wallet.withdraw',
+        entity: 'transaction',
+        entityId: posted.transactionId,
+        data: { userId, currency, amount: value.toString() },
+      })
+    }
+    return posted
+  })
+}

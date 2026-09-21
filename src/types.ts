@@ -56,6 +56,9 @@ export type EntryType =
   // `topup`: у виписці має бути видно, які гроші провів адміністратор, а які
   // власник вписав із голови — інакше зошит не відрізнити від підробки.
   | 'self_topup'
+  // Дзеркало `self_topup`: людина забрала власні гроші з реєстру. Теж окремий
+  // тип — «зняв сам» і «списав адмін» у виписці не одне й те саме.
+  | 'self_withdrawal'
   | 'interest_accrued'
   // Admin correction of a participant's wallet — balanced against `external`,
   // like a top-up, because a balance is a ledger sum and never a field.
