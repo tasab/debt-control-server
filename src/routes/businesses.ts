@@ -4,6 +4,7 @@ import {
   createBusinessSchema,
   dashboardQuerySchema,
   monthlyQuerySchema,
+  profitSeriesQuerySchema,
   registerPatchSchema,
   spendingSchema,
   registerSchema,
@@ -87,6 +88,7 @@ export default async function businessRoutes(fastify: FastifyInstance) {
       liabilities: money(data.liabilities),
       netWorth: money(data.netWorth),
       profit: money(data.profit),
+      equity: money(data.equity),
       operatingProfit: money(data.operatingProfit),
       income: money(data.income),
       expense: money(data.expense),
@@ -182,6 +184,29 @@ export default async function businessRoutes(fastify: FastifyInstance) {
       idempotencyKey: idempotencyKeyOf(request),
     })
     return reply.code(result.replayed ? 200 : 201).send({ transactionId: result.transactionId })
+  })
+
+  /**
+   * Графік прибутку: точка на кожну подію, яка його змінила.
+   *
+   * Питання, на яке він відповідає: «чи росте те, що я заробляю, від
+   * закриття до закриття». Тому вісь — не календар, а самі закриття й
+   * витрати між ними.
+   */
+  fastify.get('/businesses/me/profit-series', { preHandler: borrower }, async (request) => {
+    const business = await domain.businessOf(request.user.id)
+    const query = profitSeriesQuerySchema.parse(request.query)
+    const data = await domain.profitSeries(business.id, { limit: query.limit, in: query.in })
+    return {
+      baseCurrency: data.baseCurrency,
+      points: data.points.map((point) => ({
+        transactionId: point.transactionId,
+        type: point.type,
+        at: iso(point.at),
+        delta: money(point.delta),
+        profit: money(point.profit),
+      })),
+    }
   })
 
   // Помісячно: скільки заробив, витратив і забрав. Закривати місяць не треба —

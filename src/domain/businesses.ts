@@ -864,6 +864,82 @@ export async function monthlyReport(
 }
 
 /**
+ * Як прибуток змінювався від закриття до закриття.
+ *
+ * Прибуток не нараховується рівномірно в часі: він з'являється стрибком тоді,
+ * коли ввечері перерахували каси, і просідає, коли записали витрату. Тому
+ * точка графіка — не день, а подія: одна проводка, яка зачепила виторг або
+ * витрати. Між ними нічого не відбувається, і лінія має йти рівно.
+ *
+ * Накопичення рахується від самого початку, а `limit` тільки обрізає хвіст
+ * для показу: інакше перша точка на екрані починалася б з нуля й графік
+ * брехав би про те, скільки вже зароблено.
+ */
+export async function profitSeries(
+  businessId: string,
+  { limit = 60, in: target }: { limit?: number; in?: string | null } = {},
+) {
+  const { toBase, base } = await valuationTable(target)
+
+  // Дата точки — коли рахували касу, а не коли рядок ліг у базу. Перерахунок
+  // за минулий вечір записують наступного ранку, і на графіку він має стояти
+  // тим вечором, інакше «закрив 1-го і 7-го» перетворюється на дві точки
+  // сьогоднішнім числом.
+  const at = sql<Date>`COALESCE(${cashCounts.countedAt}, ${ledgerEntries.createdAt})`
+
+  const rows = await db
+    .select({
+      transactionId: ledgerEntries.transactionId,
+      type: transactions.type,
+      kind: accounts.kind,
+      currency: ledgerEntries.currency,
+      amount: ledgerEntries.amount,
+      createdAt: at,
+    })
+    .from(ledgerEntries)
+    .innerJoin(accounts, eq(accounts.id, ledgerEntries.accountId))
+    .innerJoin(transactions, eq(transactions.id, ledgerEntries.transactionId))
+    .leftJoin(cashCounts, eq(cashCounts.transactionId, ledgerEntries.transactionId))
+    .where(
+      and(
+        eq(accounts.ownerType, 'business'),
+        eq(accounts.ownerId, businessId),
+        inArray(accounts.kind, ['business_income', 'business_expense']),
+      ),
+    )
+    .orderBy(sql`${at} ASC`, ledgerEntries.id)
+
+  // Одна дія людини — одна точка, навіть якщо вона зачепила виторг і витрати
+  // однією проводкою.
+  const byTransaction = new Map<
+    string,
+    { transactionId: string; type: string; at: Date; delta: Money }
+  >()
+  for (const row of rows) {
+    const point = byTransaction.get(row.transactionId) ?? {
+      transactionId: row.transactionId,
+      type: row.type,
+      at: row.createdAt,
+      delta: 0n,
+    }
+    const amount = BigInt(row.amount)
+    // Виторг накопичується від'ємним, витрати — додатним; прибуток росте на
+    // перший і падає на другий.
+    point.delta +=
+      row.kind === 'business_income' ? toBase(-amount, row.currency) : -toBase(amount, row.currency)
+    byTransaction.set(row.transactionId, point)
+  }
+
+  let running = 0n
+  const points = [...byTransaction.values()].map((point) => {
+    running += point.delta
+    return { ...point, profit: running }
+  })
+
+  return { baseCurrency: base, points: points.slice(-limit) }
+}
+
+/**
  * Історія рухів по бізнесу.
  *
  * Одна стрічка на всі гроші: перерахунки, витрати, вилучення, внески, вклади
@@ -1019,18 +1095,24 @@ export async function dashboard(businessId: string, { in: target }: { in?: strin
   const netWorth = assets - liabilities
 
   /**
-   * Власний капітал — цифра, яку виставляє власник, а не сума проводок.
+   * Власний капітал — стартове число плюс те, що власник вніс і забрав потім.
    *
-   * Для обмінника «скільки моїх грошей у справі» рахує сама людина: гроші
-   * заходять і виходять десятками способів, і зводити їх автоматично означало б
-   * помилятися щоразу, коли якийсь рух не потрапив у потрібну кнопку. Тому
-   * тут — дата й число, яке власник міняє, коли вважає за потрібне.
+   * Стартове виставляє людина: на момент, коли бізнес заводять у систему,
+   * гроші в ньому вже є, і зводити їх з порожнього журналу нема з чого. Але
+   * далі кожен внесок і кожне вилучення проходять кнопкою й лягають у журнал
+   * (`business_capital`, `business_draw`), тож їх не треба виставляти вручну —
+   * вони вже пораховані.
+   *
+   * Раніше капітал дорівнював самому лише стартовому числу, і власний внесок
+   * ішов просто в прибуток: каса росла, капітал стояв, різниця між ними
+   * читалася як заробіток. Гроші, які принесли з дому, заробітком не є.
    *
    * Прибуток тоді очевидний: усе, що є, мінус чуже й мінус своє.
    */
   const capital = await currentStartingCapital(businessId)
   const startingBase = capital ? toBase(capital.amount, capital.currency) : 0n
-  const profit = netWorth - startingBase
+  const equity = startingBase + capitalBase - drawBase
+  const profit = netWorth - equity
 
   return {
     business,
@@ -1041,17 +1123,19 @@ export async function dashboard(businessId: string, { in: target }: { in?: strin
     startingCapital: capital
       ? { amount: capital.amount, currency: capital.currency, base: startingBase }
       : null,
+    // Скільки грошей власника зараз у справі: стартове число, внески й
+    // вилучення разом. Саме проти нього рахується прибуток.
+    equity,
     profit,
     /**
      * Прибуток від операцій — виторг мінус витрати, як їх показали
      * перерахунки.
      *
-     * Це чесніше число, ніж `profit`. Внесок власника в касу піднімає
-     * чисту вартість, і `profit` проти стартового капіталу росте від самого
-     * лише поповнення, хоча бізнес нічого не заробив. Сюди ж потрапляє тільки
-     * різниця, якої облік не пояснює, — тобто справжня торгівля. Переказ і
-     * виведення проходять журналом, перерахунок їх не бачить, і на цю цифру
-     * вони не впливають.
+     * `profit` рахується від капіталу й тому не росте від внеску власника,
+     * але він усе одно вбирає все, чого облік не бачив: знайдену готівку,
+     * недостачу, курсову різницю. Сюди ж потрапляє лише те, що показали
+     * перерахунки, — тобто власне торгівля. Переказ і виведення проходять
+     * журналом, перерахунок їх не бачить, і на цю цифру вони не впливають.
      */
     operatingProfit: incomeBase - expenseBase,
     income: incomeBase,

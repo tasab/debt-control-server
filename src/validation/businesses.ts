@@ -58,6 +58,12 @@ export const monthlyQuerySchema = z.object({
   in: currencyCode.optional(),
 })
 
+// Графік прибутку: скільки останніх точок показувати.
+export const profitSeriesQuerySchema = z.object({
+  limit: z.coerce.number().int().min(2).max(365).default(60),
+  in: currencyCode.optional(),
+})
+
 // Валюта показу дашборда. Порожнє значення = базова валюта сервера.
 export const dashboardQuerySchema = z.object({ in: currencyCode.optional() })
 
