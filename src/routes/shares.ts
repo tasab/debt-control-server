@@ -98,6 +98,7 @@ export default async function shareRoutes(fastify: FastifyInstance) {
           total: money(row.total),
         })),
         wallets: data.wallets.map(serializeWallet),
+        history: data.history,
         generatedAt: iso(data.generatedAt),
       }
     },

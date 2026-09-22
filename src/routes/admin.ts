@@ -4,6 +4,7 @@ import {
   listParticipants,
   participantAdjustments,
 } from '../domain/admin.ts'
+import { listTransactions } from '../domain/transactions.ts'
 import { adjustBalanceSchema, listParticipantsSchema } from '../validation/admin.ts'
 import { idempotencyKeyOf } from '../idempotency.ts'
 import { iso, money, serializeWallet } from '../serialize.ts'
@@ -57,6 +58,20 @@ export default async function adminRoutes(fastify: FastifyInstance) {
       })),
     }
   })
+
+  /**
+   * Виписка учасника очима адміна.
+   *
+   * Те саме, що людина бачить у своїй історії, і тим самим кодом: другого
+   * визначення «що сталося з цими грошима» бути не повинно. Адмін дивиться на
+   * чужу виписку, коли розбирається, звідки взялася сума, — тож сюди йде вся
+   * стрічка, а не самі лише його власні коригування.
+   */
+  fastify.get<IdParams>(
+    '/admin/users/:id/transactions',
+    { preHandler: fastify.guard(['admin']) },
+    async (request) => listTransactions(request.params.id, { limit: 50 }),
+  )
 
   fastify.get<IdParams>(
     '/admin/users/:id/adjustments',

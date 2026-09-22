@@ -6,6 +6,7 @@ import { balanceShares, users } from '../../db/schema/index.ts'
 import { newId } from '../money/amount.ts'
 import { AppError, errors } from '../errors.ts'
 import { walletsForUser } from '../money/balances.ts'
+import { listTransactions } from './transactions.ts'
 import { summary } from './stats.ts'
 
 /**
@@ -15,8 +16,8 @@ import { summary } from './stats.ts'
  * тож токен береться з crypto (128 біт), а не з лічильника й не з id
  * користувача: вгадати його має бути так само важко, як пароль.
  *
- * Назовні йде рівно те, що людина погодилася показати: імʼя, чиста вартість і
- * розклад по валютах. Ні пошти, ні історії, ні бізнесу, ні id — сторінка
+ * Назовні йде рівно те, що людина погодилася показати: імʼя, чиста вартість,
+ * розклад по валютах і останні рухи — без імен тих, з ким вона їх робила. Ні пошти, ні історії, ні бізнесу, ні id — сторінка
  * призначена «показати, що гроші є», а не дати доступ до рахунку.
  */
 
@@ -125,6 +126,10 @@ export async function viewShare(token: string) {
   // мене всього» бути не повинно.
   const totals = await summary(share.userId)
   const wallets = await walletsForUser(share.userId)
+  // Виписка — те саме, що власник бачить у себе, але без імен контрагентів:
+  // хто саме переказав йому гроші, до цього посилання не входить, це чужа
+  // особа й чужа згода.
+  const history = await listTransactions(share.userId, { limit: 20 })
 
   await db
     .update(balanceShares)
@@ -149,6 +154,7 @@ export async function viewShare(token: string) {
     // Порожні гаманці не показуються: перелік нулів нічого не додає, а сторінку
     // робить довшою за те єдине число, заради якого її відкрили.
     wallets: wallets.filter((wallet) => wallet.available > 0n),
+    history: history.items.map(({ counterparty, ...move }) => move),
     generatedAt: new Date(),
   }
 }
