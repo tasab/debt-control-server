@@ -682,12 +682,25 @@ export async function recordSpending({
       return reclassifyIncome(tx, businessId, userId, currency, value, comment, idempotencyKey, at)
 
     const cash = await resolveSource(tx, businessId, source, currency)
+
+    // Рахувати можна в одній валюті, а брати з іншої: «забрав тисячу доларів»
+    // з гривневої каси — це гривні за курсом. Проводка пишеться у валюті
+    // джерела, бо саме ці гроші й зрушили; у `meta` лишається те, як суму
+    // назвала людина.
+    const moved =
+      cash.currency === currency
+        ? value
+        : (await valuationTable(null, tx)).convert(value, currency, cash.currency)
+    if (moved <= 0n) {
+      throw errors.validation('Замало для перерахунку за курсом', { amount: 'збільште суму' })
+    }
+
     const counterpart =
       kind === 'expense'
-        ? await businessExpense(businessId, currency, tx)
+        ? await businessExpense(businessId, cash.currency, tx)
         : kind === 'draw'
-          ? await businessDraw(businessId, currency, tx)
-          : await businessCapital(businessId, currency, tx)
+          ? await businessDraw(businessId, cash.currency, tx)
+          : await businessCapital(businessId, cash.currency, tx)
 
     const sign = kind === 'capital' ? 1n : -1n
 
@@ -697,10 +710,29 @@ export async function recordSpending({
         idempotencyKey,
         actorId: userId,
         occurredAt: at,
-        meta: { businessId, kind, source },
+        meta: {
+          businessId,
+          kind,
+          source,
+          ...(cash.currency === currency
+            ? {}
+            : { asked: { amount: value.toString(), currency } }),
+        },
         entries: [
-          { accountId: cash.id, currency, amount: sign * value, entryType: kind, comment },
-          { accountId: counterpart.id, currency, amount: -sign * value, entryType: kind, comment },
+          {
+            accountId: cash.id,
+            currency: cash.currency,
+            amount: sign * moved,
+            entryType: kind,
+            comment,
+          },
+          {
+            accountId: counterpart.id,
+            currency: cash.currency,
+            amount: -sign * moved,
+            entryType: kind,
+            comment,
+          },
         ],
       },
       tx,
@@ -753,14 +785,29 @@ async function reclassifyIncome(
   )
 }
 
-/** `cash` або `register:<id>` — звідки фізично пішли гроші. */
+/**
+ * Звідки фізично пішли гроші: `cash`, `cash:<CUR>` або `register:<id>`.
+ *
+ * Валюта джерела повертається разом із рахунком, бо вона не зобов'язана
+ * збігатися з тією, у якій рахує людина: «забрав собі 1 000 доларів» може
+ * означати гривні з каси за курсом. Голий `cash` — готівка в тій самій
+ * валюті, у якій названо суму.
+ */
 async function resolveSource(
   tx: Tx,
   businessId: string,
   source: string,
   currency: string,
-): Promise<{ id: string }> {
-  if (source === 'cash') return businessCash(businessId, currency, tx)
+): Promise<{ id: string; currency: string }> {
+  if (source === 'cash') {
+    const account = await businessCash(businessId, currency, tx)
+    return { id: account.id, currency }
+  }
+  if (source.startsWith('cash:')) {
+    const code = source.slice('cash:'.length)
+    const account = await businessCash(businessId, code, tx)
+    return { id: account.id, currency: code }
+  }
   if (source.startsWith('register:')) {
     const [row] = await tx
       .select()
@@ -774,10 +821,7 @@ async function resolveSource(
       )
       .limit(1)
     if (!row) throw errors.notFound('Касу')
-    if (row.currency !== currency) {
-      throw errors.validation('Валюта каси не збігається', { source: `каса в ${row.currency}` })
-    }
-    return { id: row.accountId }
+    return { id: row.accountId, currency: row.currency }
   }
   throw errors.validation('Невідоме джерело', { source })
 }

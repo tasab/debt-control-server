@@ -47,7 +47,7 @@ export const cashCountSchema = z
 // пояснення не скаже нічого, а саме ці рядки складають місячний звіт.
 export const spendingSchema = z.object({
   kind: z.enum(['expense', 'draw', 'capital']),
-  source: z.string().regex(/^(cash|income|register:.+)$/, 'оберіть джерело'),
+  source: z.string().regex(/^(cash|cash:[A-Z]{3}|income|register:.+)$/, 'оберіть джерело'),
   currency: currencyCode,
   amount: amountString,
   comment: z.string({ error: 'вкажіть причину' }).trim().min(3, 'вкажіть причину').max(280),
