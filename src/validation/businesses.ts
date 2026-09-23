@@ -51,6 +51,9 @@ export const spendingSchema = z.object({
   currency: currencyCode,
   amount: amountString,
   comment: z.string({ error: 'вкажіть причину' }).trim().min(3, 'вкажіть причину').max(280),
+  // Дата події. Порожньо — значить сьогодні: більшість записів роблять того ж
+  // дня, і питати дату щоразу означало б вимагати підтвердження очевидного.
+  occurredAt: isoDate.optional(),
 })
 
 export const monthlyQuerySchema = z.object({

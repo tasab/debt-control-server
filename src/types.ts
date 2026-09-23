@@ -110,6 +110,8 @@ export interface PostTransactionInput {
   idempotencyKey?: string | null
   actorId?: string | null
   meta?: Record<string, unknown>
+  /** Коли операція сталася, якщо це не «зараз»: запис заднім числом. */
+  occurredAt?: Date
 }
 
 export interface PostedTransaction {

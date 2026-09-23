@@ -44,6 +44,7 @@ interface AccountState {
  * @param {string} [input.idempotencyKey]
  * @param {string} [input.actorId]
  * @param {object} [input.meta]
+ * @param {Date}   [input.occurredAt]    коли це сталося, якщо не зараз
  * @param {object} [tx]                  existing drizzle transaction to join
  */
 export async function postTransaction(
@@ -56,7 +57,14 @@ export async function postTransaction(
 
 async function postWithin(
   tx: Tx,
-  { type, entries, idempotencyKey = null, actorId = null, meta = {} }: PostTransactionInput,
+  {
+    type,
+    entries,
+    idempotencyKey = null,
+    actorId = null,
+    meta = {},
+    occurredAt,
+  }: PostTransactionInput,
 ): Promise<PostedTransaction> {
   if (!Array.isArray(entries) || entries.length < 2) {
     throw new AppError('LEDGER_INVALID', 'A transaction needs at least two entries', {
@@ -174,6 +182,10 @@ async function postWithin(
       idempotencyKey,
       actorId,
       meta,
+      // Дата події, а не запису: витрату за минулий вівторок вносять у
+      // четвер, і в звіті вона має стояти вівторком. Порожньо — значить
+      // зараз, як і було.
+      ...(occurredAt ? { createdAt: occurredAt } : {}),
     })
   } catch (err) {
     if (isUniqueViolation(err) && idempotencyKey) {
@@ -187,6 +199,7 @@ async function postWithin(
     entries.map((entry) => ({
       id: newId('led'),
       transactionId,
+      ...(occurredAt ? { createdAt: occurredAt } : {}),
       accountId: entry.accountId,
       currency: entry.currency,
       amount: entry.amount,

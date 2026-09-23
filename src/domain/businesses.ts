@@ -651,6 +651,7 @@ export async function recordSpending({
   currency,
   amount,
   comment,
+  occurredAt,
   idempotencyKey,
 }: {
   businessId: string
@@ -660,9 +661,11 @@ export async function recordSpending({
   currency: string
   amount: string
   comment: string
+  occurredAt?: string
   idempotencyKey?: string | null
 }) {
   const value = parseAmount(amount)
+  const at = occurredAt ? new Date(occurredAt) : undefined
   if (value <= 0n) throw errors.validation('Сума має бути більшою за нуль', { amount: 'мін. 0.01' })
 
   if (source === 'income' && kind !== 'capital') {
@@ -675,7 +678,8 @@ export async function recordSpending({
     // Каса чи готівка — той самий рахунок в усіх трьох випадках, різниця лише
     // в напрямку: внесок наповнює її, витрата й вилучення спустошують.
     // Виняток — перекласифікація: там другий бік це виторг, і каса не рухається.
-    if (source === 'income') return reclassifyIncome(tx, businessId, userId, currency, value, comment, idempotencyKey)
+    if (source === 'income')
+      return reclassifyIncome(tx, businessId, userId, currency, value, comment, idempotencyKey, at)
 
     const cash = await resolveSource(tx, businessId, source, currency)
     const counterpart =
@@ -692,6 +696,7 @@ export async function recordSpending({
         type: `business_${kind}`,
         idempotencyKey,
         actorId: userId,
+        occurredAt: at,
         meta: { businessId, kind, source },
         entries: [
           { accountId: cash.id, currency, amount: sign * value, entryType: kind, comment },
@@ -717,6 +722,7 @@ async function reclassifyIncome(
   value: Money,
   comment: string,
   idempotencyKey?: string | null,
+  occurredAt?: Date,
 ) {
   const income = await businessIncome(businessId, currency, tx)
   const capital = await businessCapital(businessId, currency, tx)
@@ -736,6 +742,7 @@ async function reclassifyIncome(
       type: 'business_capital',
       idempotencyKey,
       actorId: userId,
+      occurredAt,
       meta: { businessId, kind: 'capital', source: 'income' },
       entries: [
         { accountId: income.id, currency, amount: value, entryType: 'capital', comment },
@@ -955,6 +962,9 @@ export async function businessHistory(businessId: string, limit = 100) {
     .select({
       transactionId: ledgerEntries.transactionId,
       type: transactions.type,
+      // Яку операцію ця проводка скасовує — щоб у стрічці було видно, що
+      // запис уже виправлений, а не лишився чинним.
+      reversalOf: transactions.reversalOf,
       createdAt: ledgerEntries.createdAt,
       comment: ledgerEntries.comment,
       currency: ledgerEntries.currency,
@@ -978,6 +988,7 @@ export async function businessHistory(businessId: string, limit = 100) {
   interface Move {
     transactionId: string
     type: string
+    reversalOf: string | null
     createdAt: Date
     comment: string | null
     lines: Entry[]
@@ -989,6 +1000,7 @@ export async function businessHistory(businessId: string, limit = 100) {
       byTransaction.get(row.transactionId) ?? {
         transactionId: row.transactionId,
         type: row.type,
+        reversalOf: row.reversalOf,
         createdAt: row.createdAt,
         comment: row.comment,
         lines: [],
@@ -1154,4 +1166,104 @@ export async function dashboard(businessId: string, { in: target }: { in?: strin
     byCurrency: currencyRows,
     staleCodes,
   }
+}
+
+/**
+ * Скасувати власний внесок або вилучення.
+ *
+ * Дві різні операції під однією кнопкою, бо для людини це одне: «цього запису
+ * не мало бути».
+ *
+ * Вилучення скасовується звичайним сторно — гроші, які ви забрали, ви
+ * повертаєте, і каса росте назад.
+ *
+ * Внесок готівкою — ні. Його сторно забрало б із каси ті самі гроші, а вони
+ * там уже давно не ті: їх витратили, перерахували, частину списали як
+ * нестачу. Тому каса не рухається взагалі — рухається тільки те, чим ці
+ * гроші вважаються: сума йде з вашого капіталу у виторг. Саме так помилка й
+ * виглядає насправді: гроші в бізнесі були, але вашими вони не були.
+ *
+ * Внесок, зроблений з виторгу («вже в касі»), каси не торкався й тоді, тож
+ * його достатньо просто сторнувати.
+ */
+export async function cancelOwnerMove(businessId: string, transactionId: string, userId: string) {
+  const [original] = await db
+    .select()
+    .from(transactions)
+    .where(eq(transactions.id, transactionId))
+    .limit(1)
+  if (!original) throw errors.notFound('Операцію')
+
+  const meta = (original.meta ?? {}) as { businessId?: string }
+  const isOwnerMove = original.type === 'business_capital' || original.type === 'business_draw'
+  if (!isOwnerMove || meta.businessId !== businessId) throw errors.notFound('Операцію')
+
+  const [already] = await db
+    .select({ id: transactions.id })
+    .from(transactions)
+    .where(eq(transactions.reversalOf, transactionId))
+    .limit(1)
+  if (already) throw errors.conflict('ALREADY_REVERSED', 'Цю операцію вже скасовано')
+
+  const rows = await db
+    .select({
+      accountId: ledgerEntries.accountId,
+      kind: accounts.kind,
+      currency: ledgerEntries.currency,
+      amount: ledgerEntries.amount,
+    })
+    .from(ledgerEntries)
+    .innerJoin(accounts, eq(accounts.id, ledgerEntries.accountId))
+    .where(eq(ledgerEntries.transactionId, transactionId))
+
+  const touchedCash = rows.some(
+    (row) => row.kind === 'business_cash' || row.kind === 'business_register',
+  )
+
+  if (original.type === 'business_draw' || !touchedCash) {
+    return reverseTransaction(
+      { transactionId, actorId: userId, reason: 'Скасування запису' },
+      null,
+    )
+  }
+
+  return db.transaction(async (tx) => {
+    const entries: LedgerEntryInput[] = []
+    for (const row of rows.filter((r) => r.kind === 'business_capital')) {
+      // Внесок лежить на рахунку капіталу від'ємним — скасування повертає
+      // його до нуля, а зустрічний бік іде у виторг.
+      const value = -BigInt(row.amount)
+      const income = await businessIncome(businessId, row.currency, tx)
+      entries.push({
+        accountId: row.accountId,
+        currency: row.currency,
+        amount: value,
+        entryType: 'capital',
+        comment: 'Скасування внеску',
+      })
+      entries.push({
+        accountId: income.id,
+        currency: row.currency,
+        amount: -value,
+        entryType: 'capital',
+        comment: 'Скасування внеску',
+      })
+    }
+    if (entries.length === 0) throw errors.conflict('NOTHING_TO_CANCEL', 'Нічого скасовувати')
+
+    const posted = await postTransaction(
+      {
+        type: 'business_capital_cancel',
+        actorId: userId,
+        meta: { businessId, reversalOf: transactionId },
+        entries,
+      },
+      tx,
+    )
+    await tx
+      .update(transactions)
+      .set({ reversalOf: transactionId })
+      .where(eq(transactions.id, posted.transactionId))
+    return posted
+  })
 }

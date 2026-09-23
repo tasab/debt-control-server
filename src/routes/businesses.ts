@@ -159,6 +159,7 @@ export default async function businessRoutes(fastify: FastifyInstance) {
     return moves.map((move) => ({
       transactionId: move.transactionId,
       type: move.type,
+      reversalOf: move.reversalOf ?? null,
       createdAt: iso(move.createdAt),
       comment: move.comment,
       lines: move.lines.map((line) => ({
@@ -208,6 +209,22 @@ export default async function businessRoutes(fastify: FastifyInstance) {
       })),
     }
   })
+
+  /**
+   * Скасувати власний внесок або вилучення.
+   *
+   * Помилковий запис лишається в історії з позначкою «скасовано» — журнал не
+   * переписується, а доповнюється зустрічною проводкою.
+   */
+  fastify.post<{ Params: { id: string } }>(
+    '/businesses/me/owner-moves/:id/cancel',
+    { preHandler: borrower },
+    async (request, reply) => {
+      const business = await domain.businessOf(request.user.id)
+      const result = await domain.cancelOwnerMove(business.id, request.params.id, request.user.id)
+      return reply.code(201).send({ transactionId: result.transactionId })
+    },
+  )
 
   // Помісячно: скільки заробив, витратив і забрав. Закривати місяць не треба —
   // журнал знає дату кожної проводки.
