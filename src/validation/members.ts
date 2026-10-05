@@ -24,3 +24,12 @@ export const claimTransferSchema = z.object({
   amount: amountString,
   comment,
 })
+
+// Правка боргу перед учасником самим власником — та сама форма, що в адмінці:
+// `set` може назвати нуль (обнулити борг), причина обов'язкова.
+export const ownerAdjustSchema = z.object({
+  currency: currencyCode,
+  mode: z.enum(['set', 'credit', 'debit']),
+  amount: z.string().regex(/^\d+$/, 'сума має бути рядком мінорних одиниць, напр. "100500"'),
+  comment: z.string().trim().min(3, 'вкажіть причину').max(280, 'до 280 символів'),
+})

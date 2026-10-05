@@ -4,6 +4,7 @@ import {
   acceptInviteSchema,
   claimTransferSchema,
   inviteSchema,
+  ownerAdjustSchema,
   rateSchema,
   withdrawSchema,
 } from '../validation/members.ts'
@@ -98,6 +99,25 @@ export default async function memberRoutes(fastify: FastifyInstance) {
       const business = await businessOf(request.user.id)
       const body = withdrawSchema.parse(request.body)
       const result = await domain.payForMember({
+        businessId: business.id,
+        ownerId: request.user.id,
+        memberId: request.params.id,
+        ...body,
+        idempotencyKey: idempotencyKeyOf(request),
+      })
+      return reply.code(result.replayed ? 200 : 201).send({ transactionId: result.transactionId })
+    },
+  )
+
+  // Правка боргу перед учасником власником — як у адмінці, лише з вкладки
+  // бізнесу. Різниця йде в прибуток, у історії — «Правка власником».
+  fastify.post<IdParams>(
+    '/businesses/me/members/:id/adjustments',
+    { preHandler: borrower },
+    async (request, reply) => {
+      const business = await businessOf(request.user.id)
+      const body = ownerAdjustSchema.parse(request.body)
+      const result = await domain.ownerAdjustClaim({
         businessId: business.id,
         ownerId: request.user.id,
         memberId: request.params.id,

@@ -1,4 +1,4 @@
-import { and, eq, inArray, isNull, sql } from 'drizzle-orm'
+import { and, eq, inArray, isNull, or, sql } from 'drizzle-orm'
 import { db } from '../db/index.ts'
 import {
   accounts,
@@ -1084,7 +1084,18 @@ export async function businessHistory(businessId: string, limit = 100) {
     .from(ledgerEntries)
     .innerJoin(accounts, eq(accounts.id, ledgerEntries.accountId))
     .innerJoin(transactions, eq(transactions.id, ledgerEntries.transactionId))
-    .where(and(eq(accounts.ownerType, 'business'), eq(accounts.ownerId, businessId)))
+    // Борг перед учасниками — теж гроші бізнесу, хоч рахунок і належить
+    // участі: без нього правка боргу чи передача частки не з'являлись у
+    // стрічці зовсім.
+    .where(
+      or(
+        and(eq(accounts.ownerType, 'business'), eq(accounts.ownerId, businessId)),
+        and(
+          eq(accounts.ownerType, 'membership'),
+          sql`${accounts.ownerId} IN (SELECT id FROM business_members WHERE business_id = ${businessId})`,
+        ),
+      ),
+    )
     .orderBy(sql`${ledgerEntries.createdAt} DESC`)
     .limit(limit * 6)
 

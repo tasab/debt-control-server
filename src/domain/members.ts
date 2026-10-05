@@ -680,6 +680,93 @@ export async function payForMember({
   })
 }
 
+/**
+ * Правка боргу перед учасником самим власником бізнесу.
+ *
+ * Те саме, що правка в адмінці, тільки з вкладки бізнесу: власник називає,
+ * скільки бізнес має бути винен (`set`), або скільки додати чи списати.
+ * Другий бік — зовнішній рахунок, тож різниця йде в прибуток: менший борг —
+ * прибуток росте, більший — падає. Це виправлення помилки, а не рух грошей.
+ * Якщо ж власник закрив борг своїм коштом — для цього «Оплатив зі своїх».
+ *
+ * Тип окремий від адмінського (`owner_adjustment`), щоб і в історії бізнесу, і
+ * у виписці учасника було видно, хто саме правив.
+ */
+export async function ownerAdjustClaim({
+  businessId,
+  ownerId,
+  memberId,
+  currency,
+  mode,
+  amount,
+  comment,
+  idempotencyKey,
+}: {
+  businessId: string
+  ownerId: string
+  memberId: string
+  currency: string
+  mode: 'set' | 'credit' | 'debit'
+  amount: string
+  comment: string
+  idempotencyKey?: string | null
+}) {
+  const value = parseAmount(amount)
+  if (mode !== 'set' && value <= 0n) {
+    throw errors.validation('Сума має бути більшою за нуль', { amount: 'мін. 1' })
+  }
+
+  return db.transaction(async (tx) => {
+    const member = await memberFor(tx, memberId)
+    if (member.businessId !== businessId) throw errors.notFound('Участь')
+
+    const claim = await memberClaim(member.id, currency, tx)
+    const external = await externalAccount(currency, tx)
+
+    // Борг живе від'ємним; назовні — «скільки бізнес винен», додатне.
+    const before = -(await balanceOf(claim.id, tx))
+    const delta = mode === 'set' ? value - before : mode === 'credit' ? value : -value
+    if (delta === 0n) {
+      throw errors.validation('Борг уже такий — змінювати нічого', { amount: 'інша сума' })
+    }
+    if (before + delta < 0n) {
+      throw errors.validation(`Борг лише ${toMajor(before, 2)} ${currency} — менше нуля не буває`, {
+        amount: 'більше, ніж борг',
+      })
+    }
+
+    return postTransaction(
+      {
+        type: 'owner_adjustment',
+        idempotencyKey,
+        actorId: ownerId,
+        meta: {
+          businessId,
+          memberId,
+          mode,
+          before: before.toString(),
+          after: (before + delta).toString(),
+          comment,
+        },
+        entries: [
+          // Більший борг — глибший мінус на рахунку вимоги; зовнішній рахунок
+          // дзеркалить його, щоб транзакція сходилась у нуль.
+          { accountId: external.id, currency, amount: delta, entryType: 'owner_adjustment', comment },
+          {
+            accountId: claim.id,
+            currency,
+            amount: -delta,
+            entryType: 'owner_adjustment',
+            counterpartyId: ownerId,
+            comment,
+          },
+        ],
+      },
+      tx,
+    )
+  })
+}
+
 // ─── Читання ────────────────────────────────────────────────────────────────
 
 /**
