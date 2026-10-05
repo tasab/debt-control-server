@@ -10,6 +10,8 @@ const historyQuery = z.object({
   currency: currencyCode.optional(),
 })
 
+const summaryQuery = z.object({ in: currencyCode.optional() })
+
 export default async function statsRoutes(fastify: FastifyInstance) {
   fastify.get('/stats/balance-history', { preHandler: fastify.authenticate }, async (request) => {
     const query = historyQuery.parse(request.query)
@@ -25,7 +27,8 @@ export default async function statsRoutes(fastify: FastifyInstance) {
   })
 
   fastify.get('/stats/summary', { preHandler: fastify.authenticate }, async (request) => {
-    const data = await summary(request.user.id)
+    const { in: target } = summaryQuery.parse(request.query)
+    const data = await summary(request.user.id, { in: target })
     return {
       baseCurrency: data.baseCurrency,
       wallets: money(data.wallets),

@@ -1,8 +1,9 @@
+import { sql, type SQL } from 'drizzle-orm'
 import { db } from '../db/index.ts'
 import { currencies } from '../../db/schema/index.ts'
 import { config } from '../config.ts'
 import { errors } from '../errors.ts'
-import { currentRates, RATE_SCALE } from '../fx/service.ts'
+import { currentRates, MANUAL_SOURCE, RATE_SCALE } from '../fx/service.ts'
 import { divFloor } from './amount.ts'
 import type { DbOrTx, Money } from '../types.ts'
 
@@ -54,8 +55,50 @@ export async function valuationTable(target?: string | null, tx: DbOrTx = db) {
     toBase,
     convert,
     base,
+    pivot,
     mid,
     exponent,
     staleCodes: rates.filter((r) => r.isStale).map((r) => r.quote),
   }
+}
+
+/**
+ * Середній курс `currency` до півота, що діяв у момент `at`, — SQL-вираз для
+ * підзапиту в SELECT.
+ *
+ * Курси — історія, а не поточне значення: рядки лише додаються, тож «який
+ * курс був минулого вівторка» має одну відповідь і завтра не зміниться. Ручний
+ * курс, як і в `currentRates`, перекриває стрічку — але лише той, що вже був
+ * виставлений на той момент. Якщо операція старша за всю історію курсів,
+ * береться найперший відомий: нічого точнішого немає.
+ */
+export const midAtSql = (currency: SQL, at: SQL) => sql`(
+  SELECT (r.bid + r.sell) / 2 FROM exchange_rates r
+  WHERE r.base = ${config.baseCurrency} AND r.quote = ${currency}
+  ORDER BY (r.observed_at <= ${at}) DESC,
+           CASE WHEN r.observed_at <= ${at} THEN r.source_id = ${MANUAL_SOURCE} END DESC,
+           CASE WHEN r.observed_at <= ${at} THEN r.observed_at END DESC,
+           r.observed_at ASC
+  LIMIT 1)`
+
+/**
+ * Мінорні одиниці `currency` → мінорні одиниці півота за вже знайденим курсом.
+ *
+ * Округлення симетричне (до нуля за модулем), а не вниз: рух і його
+ * скасування мають дати рівно протилежні суми, інакше скасований внесок
+ * лишав би по копійці в капіталі.
+ */
+export function pivotAt(
+  amount: Money,
+  currency: string,
+  mid: bigint | null,
+  exponent: Map<string, number>,
+): Money {
+  if (currency === config.baseCurrency) return amount
+  if (!mid) return 0n
+  const magnitude = amount < 0n ? -amount : amount
+  const value =
+    (magnitude * mid * 10n ** BigInt(exponent.get(config.baseCurrency) ?? 2)) /
+    (RATE_SCALE * 10n ** BigInt(exponent.get(currency) ?? 2))
+  return amount < 0n ? -value : value
 }

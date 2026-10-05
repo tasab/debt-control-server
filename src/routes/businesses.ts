@@ -162,6 +162,7 @@ export default async function businessRoutes(fastify: FastifyInstance) {
       reversalOf: move.reversalOf ?? null,
       createdAt: iso(move.createdAt),
       comment: move.comment,
+      asked: move.asked,
       lines: move.lines.map((line) => ({
         kind: line.kind,
         name: line.name,

@@ -25,7 +25,7 @@ import {
   businessWallet,
   userWallet,
 } from '../money/accounts.ts'
-import { valuationTable } from '../money/valuation.ts'
+import { midAtSql, pivotAt, valuationTable } from '../money/valuation.ts'
 import { liabilitiesOf } from './members.ts'
 import type { CountLineKind, DbOrTx, LedgerEntryInput, Money, Tx } from '../types.ts'
 
@@ -827,6 +827,62 @@ async function resolveSource(
 }
 
 /**
+ * Внески й вилучення власника — у півоті за курсом на момент руху.
+ *
+ * Рух у валюті не перераховується щоразу за сьогоднішнім курсом: 20 євро,
+ * забрані тиждень тому, коштували тоді стільки-то гривень, і саме стільки
+ * вони й важать у капіталі назавжди. Інакше за довгу історію капітал повзав
+ * би разом із курсом і переставав сходитися з тим, що реально на руках.
+ *
+ * Скасування бере курс оригіналу, а не свій: інакше внесок і його сторно
+ * дали б різні гривні, і скасований рух лишав би в капіталі курсову різницю.
+ *
+ * Рух, записаний одразу в гривні (наприклад, євро, взяті з гривневої каси),
+ * і так зафіксований — курс до нього не застосовується.
+ */
+async function ownerMovesAtCost(businessId: string, exponent: Map<string, number>) {
+  const fixedAt = sql`COALESCE(orig.created_at, t.created_at)`
+  const result = await db.execute(sql`
+    SELECT a.kind,
+           e.currency,
+           e.amount,
+           to_char(date_trunc('month', e.created_at AT TIME ZONE 'UTC'), 'YYYY-MM') AS month,
+           ${midAtSql(sql`e.currency`, fixedAt)} AS mid
+    FROM ledger_entries e
+    JOIN accounts a ON a.id = e.account_id
+    JOIN transactions t ON t.id = e.transaction_id
+    LEFT JOIN transactions orig ON orig.id = t.reversal_of
+    WHERE a.owner_type = 'business'
+      AND a.owner_id = ${businessId}
+      AND a.kind IN ('business_capital', 'business_draw')
+  `)
+  const rows = (result.rows ?? result) as Array<Record<string, unknown>>
+  return rows.map((row) => {
+    const amount = BigInt(String(row.amount))
+    const currency = String(row.currency)
+    const mid = row.mid == null ? null : BigInt(String(row.mid))
+    const pivot = pivotAt(amount, currency, mid, exponent)
+    // Капітал лежить від'ємним, вилучення — додатним; назовні обидва —
+    // звичне «скільки внесено» і «скільки забрано».
+    return {
+      kind: String(row.kind) as 'business_capital' | 'business_draw',
+      month: String(row.month),
+      pivot: row.kind === 'business_capital' ? -pivot : pivot,
+    }
+  })
+}
+
+/** Стартовий капітал у півоті — за курсом на день, з якого він діє. */
+async function startingAtCost(capital: StartingCapital, exponent: Map<string, number>) {
+  const result = await db.execute(
+    sql`SELECT ${midAtSql(sql`${capital.currency}`, sql`${capital.effectiveFrom}`)} AS mid`,
+  )
+  const [row] = (result.rows ?? result) as Array<Record<string, unknown>>
+  const mid = row?.mid == null ? null : BigInt(String(row.mid))
+  return pivotAt(capital.amount, capital.currency, mid, exponent)
+}
+
+/**
  * Помісячний підсумок.
  *
  * Закривати місяць не треба: журнал знає дату кожної проводки, тож «скільки
@@ -838,7 +894,7 @@ export async function monthlyReport(
   businessId: string,
   { months = 12, in: target }: { months?: number; in?: string | null } = {},
 ) {
-  const { toBase, base } = await valuationTable(target)
+  const { toBase, convert, base, pivot, exponent } = await valuationTable(target)
 
   const rows = await db
     .select({
@@ -853,12 +909,7 @@ export async function monthlyReport(
       and(
         eq(accounts.ownerType, 'business'),
         eq(accounts.ownerId, businessId),
-        inArray(accounts.kind, [
-          'business_income',
-          'business_expense',
-          'business_draw',
-          'business_capital',
-        ]),
+        inArray(accounts.kind, ['business_income', 'business_expense']),
       ),
     )
     .groupBy(sql`1`, accounts.kind, ledgerEntries.currency)
@@ -888,9 +939,22 @@ export async function monthlyReport(
     // «скільки прийшло».
     if (row.kind === 'business_income') entry.income += toBase(-amount, row.currency)
     if (row.kind === 'business_expense') entry.expense += toBase(amount, row.currency)
-    if (row.kind === 'business_draw') entry.draw += toBase(amount, row.currency)
-    if (row.kind === 'business_capital') entry.capital += toBase(-amount, row.currency)
     byMonth.set(row.month, entry)
+  }
+  // Внески й вилучення — за курсом на момент руху (див. ownerMovesAtCost).
+  // Місячна сума зводиться в гривні, і лише вона переводиться у валюту показу.
+  const ownerByMonth = new Map<string, { draw: Money; capital: Money }>()
+  for (const move of await ownerMovesAtCost(businessId, exponent)) {
+    const sums = ownerByMonth.get(move.month) ?? { draw: 0n, capital: 0n }
+    if (move.kind === 'business_draw') sums.draw += move.pivot
+    else sums.capital += move.pivot
+    ownerByMonth.set(move.month, sums)
+  }
+  for (const [month, sums] of ownerByMonth) {
+    const entry = byMonth.get(month) ?? empty(month)
+    entry.draw += convert(sums.draw, pivot, base)
+    entry.capital += convert(sums.capital, pivot, base)
+    byMonth.set(month, entry)
   }
 
   const list = [...byMonth.values()]
@@ -1009,6 +1073,7 @@ export async function businessHistory(businessId: string, limit = 100) {
       // Яку операцію ця проводка скасовує — щоб у стрічці було видно, що
       // запис уже виправлений, а не лишився чинним.
       reversalOf: transactions.reversalOf,
+      meta: transactions.meta,
       createdAt: ledgerEntries.createdAt,
       comment: ledgerEntries.comment,
       currency: ledgerEntries.currency,
@@ -1035,6 +1100,9 @@ export async function businessHistory(businessId: string, limit = 100) {
     reversalOf: string | null
     createdAt: Date
     comment: string | null
+    // Як суму назвала людина, коли вона рахувалась в іншій валюті, ніж
+    // зрушили гроші: «забрав 20 EUR», а з каси пішли гривні за курсом.
+    asked: { amount: string; currency: string } | null
     lines: Entry[]
   }
 
@@ -1047,6 +1115,7 @@ export async function businessHistory(businessId: string, limit = 100) {
         reversalOf: row.reversalOf,
         createdAt: row.createdAt,
         comment: row.comment,
+        asked: (row.meta as { asked?: { amount: string; currency: string } } | null)?.asked ?? null,
         lines: [],
       }
     if (!move.comment && row.comment) move.comment = row.comment
@@ -1057,6 +1126,13 @@ export async function businessHistory(businessId: string, limit = 100) {
       amount: row.amount,
     })
     byTransaction.set(row.transactionId, move)
+  }
+
+  // Скасування саме суми не називало — вона та сама, що в оригіналі.
+  for (const move of byTransaction.values()) {
+    if (!move.asked && move.reversalOf) {
+      move.asked = byTransaction.get(move.reversalOf)?.asked ?? null
+    }
   }
 
   return [...byTransaction.values()]
@@ -1079,7 +1155,7 @@ export async function dashboard(businessId: string, { in: target }: { in?: strin
   const [business] = await db.select().from(businesses).where(eq(businesses.id, businessId)).limit(1)
   if (!business) throw errors.notFound('Бізнес')
 
-  const { toBase, base, staleCodes } = await valuationTable(target)
+  const { toBase, convert, base, pivot, exponent, staleCodes } = await valuationTable(target)
   const balances = await businessBalances(businessId)
 
   interface CurrencyRow {
@@ -1102,8 +1178,6 @@ export async function dashboard(businessId: string, { in: target }: { in?: strin
   // додатним. Обидва тут перевертаються в звичні «скільки заробив / витратив».
   let incomeBase = 0n
   let expenseBase = 0n
-  let drawBase = 0n
-  let capitalBase = 0n
   // Капітал у тих валютах, у яких його вносили. Гривневий еквівалент потрібен
   // лише для зведення з чистою вартістю; сам капітал у гривні не вимірюється —
   // якщо власник вніс $38 800, це $38 800, і курс тут ні до чого.
@@ -1120,15 +1194,21 @@ export async function dashboard(businessId: string, { in: target }: { in?: strin
     if (account.kind === 'business_cash') bump(account.currency, 'cash', account.balance)
     if (account.kind === 'business_income') incomeBase += toBase(-account.balance, account.currency)
     if (account.kind === 'business_expense') expenseBase += toBase(account.balance, account.currency)
-    if (account.kind === 'business_draw') {
-      drawBase += toBase(account.balance, account.currency)
-      bumpOwner(account.currency, 'draw', account.balance)
-    }
-    if (account.kind === 'business_capital') {
-      capitalBase += toBase(-account.balance, account.currency)
-      bumpOwner(account.currency, 'capital', -account.balance)
-    }
+    if (account.kind === 'business_draw') bumpOwner(account.currency, 'draw', account.balance)
+    if (account.kind === 'business_capital') bumpOwner(account.currency, 'capital', -account.balance)
   }
+
+  // Внесене й забране — у гривні за курсом на момент кожного руху, а не за
+  // сьогоднішнім (див. ownerMovesAtCost). У валюту показу переводиться вже
+  // зафіксована гривнева сума.
+  let capitalPivot = 0n
+  let drawPivot = 0n
+  for (const move of await ownerMovesAtCost(businessId, exponent)) {
+    if (move.kind === 'business_draw') drawPivot += move.pivot
+    else capitalPivot += move.pivot
+  }
+  const capitalBase = convert(capitalPivot, pivot, base)
+  const drawBase = convert(drawPivot, pivot, base)
 
   // Зобов'язання бізнесу — це борг перед учасниками, і він виводиться з
   // журналу, а не з окремої таблиці: рахунок учасника і є боргом.
@@ -1166,7 +1246,8 @@ export async function dashboard(businessId: string, { in: target }: { in?: strin
    * Прибуток тоді очевидний: усе, що є, мінус чуже й мінус своє.
    */
   const capital = await currentStartingCapital(businessId)
-  const startingBase = capital ? toBase(capital.amount, capital.currency) : 0n
+  // Стартовий у валюті — так само за курсом на день, з якого він діє.
+  const startingBase = capital ? convert(await startingAtCost(capital, exponent), pivot, base) : 0n
   const equity = startingBase + capitalBase - drawBase
   const profit = netWorth - equity
 

@@ -144,8 +144,10 @@ export async function balanceHistory({
  * Позик тут більше немає — вклад це не позика з графіком, а залишок рахунку
  * учасника, тож «скільки я вклав» — той самий запит по журналу, що й баланс.
  */
-export async function summary(userId: string) {
-  const { toBase, base } = await valuationTable()
+// `in` — валюта, у якій показати підсумки; гроші при цьому не рухаються,
+// перерахунок робиться на льоту за середнім курсом, як і на дашборді бізнесу.
+export async function summary(userId: string, { in: target }: { in?: string | null } = {}) {
+  const { toBase, base } = await valuationTable(target)
   const wallets = await walletsForUser(userId)
 
   // Той самий підрахунок, але без переведення в базову: людина тримає гроші в
@@ -187,7 +189,7 @@ export async function summary(userId: string) {
     .where(eq(businesses.ownerUserId, userId))
     .limit(1)
   if (business) {
-    const liabilities = await liabilitiesOf(business.id)
+    const liabilities = await liabilitiesOf(business.id, target)
     borrowedBase = liabilities.total
     for (const [currency, owed] of liabilities.byCurrency) put(currency, 'borrowed', owed)
   }
