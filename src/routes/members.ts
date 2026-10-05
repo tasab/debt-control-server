@@ -88,6 +88,26 @@ export default async function memberRoutes(fastify: FastifyInstance) {
     return { rateAnnualBps: row.rateAnnualBps, effectiveFrom: iso(row.effectiveFrom) }
   })
 
+  // Власник заплатив за учасника зі своїх: борг перед учасником меншає, капітал
+  // власника росте на ту саму суму, каси й прибуток не змінюються. Тіло — як у
+  // зняття: валюта, сума й обов'язкова причина.
+  fastify.post<IdParams>(
+    '/businesses/me/members/:id/paid-by-owner',
+    { preHandler: borrower },
+    async (request, reply) => {
+      const business = await businessOf(request.user.id)
+      const body = withdrawSchema.parse(request.body)
+      const result = await domain.payForMember({
+        businessId: business.id,
+        ownerId: request.user.id,
+        memberId: request.params.id,
+        ...body,
+        idempotencyKey: idempotencyKeyOf(request),
+      })
+      return reply.code(result.replayed ? 200 : 201).send({ transactionId: result.transactionId })
+    },
+  )
+
   // Історія того, що зайшло в бізнес. Записів тут не робить ніхто вручну:
   // вони з'являються самі, коли учасник вступає і його кошти переходять.
   fastify.get('/businesses/me/contributions', { preHandler: borrower }, async (request) => {

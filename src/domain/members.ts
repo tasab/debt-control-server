@@ -12,7 +12,13 @@ import {
 } from '../../db/schema/index.ts'
 import { errors } from '../errors.ts'
 import { newId, parseAmount, toMajor } from '../money/amount.ts'
-import { businessCash, externalAccount, memberClaim, userWallet } from '../money/accounts.ts'
+import {
+  businessCapital,
+  businessCash,
+  externalAccount,
+  memberClaim,
+  userWallet,
+} from '../money/accounts.ts'
 import { balanceOf } from '../money/balances.ts'
 import { postTransaction } from '../money/ledger.ts'
 import { valuationTable } from '../money/valuation.ts'
@@ -582,6 +588,95 @@ export async function transferClaim({
       tx,
     )
     return posted
+  })
+}
+
+/**
+ * Власник заплатив за учасника зі своїх — повз каси бізнесу.
+ *
+ * Наприклад, бізнес винен учаснику 300 €, а власник купив щось для нього за
+ * 50 € зі своєї картки. Тоді бізнес винен учаснику вже 250 €, а ці 50 € —
+ * гроші власника, вкладені в справу: борг закрито його коштом.
+ *
+ * Тому одна проводка: борг перед учасником зменшується, капітал власника
+ * зростає на ту саму суму. Каси не рухаються, прибуток не змінюється —
+ * зобов'язання й капітал зсуваються однаково. Списати борг повз капітал
+ * (правкою балансу) означало б показати ці 50 € як заробіток.
+ *
+ * Тип — `business_capital`, як у звичайного внеску: це він і є, лише не
+ * готівкою, а оплатою за учасника. Тому він видний у «Що вносив і забирав»,
+ * фіксується за курсом дня й скасовується тією ж кнопкою — сторно поверне
+ * борг учаснику.
+ */
+export async function payForMember({
+  businessId,
+  ownerId,
+  memberId,
+  currency,
+  amount,
+  comment,
+  idempotencyKey,
+}: {
+  businessId: string
+  ownerId: string
+  memberId: string
+  currency: string
+  amount: string
+  comment: string
+  idempotencyKey?: string | null
+}) {
+  const value = parseAmount(amount)
+  if (value <= 0n) throw errors.validation('Сума має бути більшою за нуль', { amount: 'мін. 1' })
+
+  return db.transaction(async (tx) => {
+    const member = await memberFor(tx, memberId)
+    if (member.businessId !== businessId) throw errors.notFound('Участь')
+
+    // Журнал і сам не дасть боргу стати плюсом, але скаже це номером рахунку.
+    const owed = (await claimBalances(memberId, tx)).find((row) => row.currency === currency)
+    const available = owed?.balance ?? 0n
+    if (value > available) {
+      throw errors.conflict(
+        'NOT_ENOUGH_FUNDS',
+        `Бізнес винен учаснику лише ${toMajor(available, 2)} ${currency}`,
+        { amount: 'більше, ніж борг' },
+      )
+    }
+
+    const [person] = await tx
+      .select({ displayName: users.displayName })
+      .from(users)
+      .where(eq(users.id, member.userId))
+      .limit(1)
+    // У списку внесків рядок має сам казати, за кого платили. Ім'я не
+    // відмінюється, тож «за учасника Петро», а не «за Петро».
+    const text = `За учасника ${person?.displayName ?? ''}: ${comment}`.replace('  ', ' ')
+
+    const claim = await memberClaim(member.id, currency, tx)
+    const capital = await businessCapital(businessId, currency, tx)
+
+    return postTransaction(
+      {
+        type: 'business_capital',
+        idempotencyKey,
+        actorId: ownerId,
+        meta: { businessId, kind: 'capital', source: 'member', memberId },
+        entries: [
+          // Борг живе від'ємним — до нуля він рухається плюсом.
+          {
+            accountId: claim.id,
+            currency,
+            amount: value,
+            entryType: 'paid_by_owner',
+            comment: text,
+            counterpartyId: ownerId,
+          },
+          // Капітал теж від'ємний: внесок — це мінус на ньому.
+          { accountId: capital.id, currency, amount: -value, entryType: 'capital', comment: text },
+        ],
+      },
+      tx,
+    )
   })
 }
 
