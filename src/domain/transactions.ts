@@ -2,6 +2,7 @@ import { and, eq, sql } from 'drizzle-orm'
 import { db } from '../db/index.ts'
 import { accounts, ledgerEntries, transactions, users } from '../../db/schema/index.ts'
 import { errors } from '../errors.ts'
+import { userAccountScope } from '../money/accounts.ts'
 import { decodeCursor, encodeCursor, iso, money } from '../serialize.ts'
 import type { Money } from '../types.ts'
 
@@ -33,16 +34,17 @@ type Counterparties = Map<string, { id: string; name: string }>
  * History is read from the user's own ledger entries: one row per movement,
  * already signed from that user's point of view. No aggregation, no joins onto
  * the counterparty's side — an entry is what happened to *this* account.
+ *
+ * «Own» includes the business's debt to them: those entries live on a
+ * membership account, and leaving them out meant money moved without a line in
+ * the statement. Hence `userAccountScope`: one definition shared by the
+ * statement, the transaction details and the CSV export.
  */
 export async function listTransactions(userId: string, query: HistoryQuery = {}) {
   const { limit = 50, cursor, currency, type, from, to, search } = query
   const cursorValue = decodeCursor(cursor)
 
-  const conditions = [
-    eq(accounts.ownerType, 'user'),
-    eq(accounts.ownerId, userId),
-    sql`${accounts.kind} IN ('user_wallet', 'user_hold')`,
-  ]
+  const conditions = [await userAccountScope(userId)]
   if (currency) conditions.push(eq(ledgerEntries.currency, currency))
   if (type) conditions.push(eq(ledgerEntries.entryType, type))
   if (from) conditions.push(sql`${ledgerEntries.createdAt} >= ${new Date(from)}`)
@@ -103,11 +105,7 @@ export async function getTransaction(userId: string, transactionId: string) {
     .innerJoin(accounts, eq(accounts.id, ledgerEntries.accountId))
     .innerJoin(transactions, eq(transactions.id, ledgerEntries.transactionId))
     .where(
-      and(
-        eq(ledgerEntries.transactionId, transactionId),
-        eq(accounts.ownerType, 'user'),
-        eq(accounts.ownerId, userId),
-      ),
+      and(eq(ledgerEntries.transactionId, transactionId), await userAccountScope(userId)),
     )
 
   // A user may only see a transaction they took part in — ownership is checked
@@ -140,8 +138,14 @@ function serializeEntry(row: EntryRow, counterparties: Counterparties) {
     transactionId: row.transactionId,
     type: row.entryType,
     currency: row.currency,
-    amount: money(row.amount),
+    // A claim is held negative (NON_POSITIVE_KINDS), so the statement flips it:
+    // putting money into the business reads as a plus to what the person has
+    // invested, not a minus. balanceHistory() in stats.ts flips it the same way.
+    amount: money(row.accountKind === 'member_claim' ? -row.amount : row.amount),
     held: row.accountKind === 'user_hold',
+    // Which pot moved: the wallet or the business. Without it a contribution
+    // would read as two identical lines with opposite signs.
+    invested: row.accountKind === 'member_claim',
     comment: row.comment,
     counterparty: row.counterpartyId ? (counterparties.get(row.counterpartyId) ?? null) : null,
     createdAt: iso(row.createdAt),

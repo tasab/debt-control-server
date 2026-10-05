@@ -1,5 +1,5 @@
-import { and, eq } from 'drizzle-orm'
-import { accounts, accountBalances } from '../../db/schema/index.ts'
+import { and, eq, inArray, or, sql } from 'drizzle-orm'
+import { accounts, accountBalances, businessMembers } from '../../db/schema/index.ts'
 import { db } from '../db/index.ts'
 import { newId } from './amount.ts'
 import type { AccountKind, DbOrTx, OwnerType } from '../types.ts'
@@ -22,6 +22,36 @@ export const NON_NEGATIVE_KINDS = new Set([
 export const NON_POSITIVE_KINDS = new Set(['member_claim'])
 
 export const PLATFORM_OWNER = { ownerType: 'platform', ownerId: 'platform' } as const
+
+/**
+ * Усі рахунки, рух по яких — це рух грошей цієї людини.
+ *
+ * Гаманець і заморожене лежать під її власним `ownerId`, а борг бізнесу перед
+ * нею — ні: він живе на рахунку участі (`ownerType: 'membership'`), бо та сама
+ * людина може вкластися у два бізнеси. Для журналу це різні власники, для
+ * людини — ті самі її гроші, просто в справі.
+ *
+ * Доки виписка питала лише `ownerType = 'user'`, усе, що рухало борг бізнесу,
+ * міняло число мовчки: адмінська правка балансу учасника, внесок, виплата,
+ * передача частки. Тому «що з цими грошима сталося» має рахуватися звідси, а
+ * не з переліку видів рахунків на кожному виклику.
+ */
+export async function userAccountScope(userId: string, tx: DbOrTx = db) {
+  const memberships = await tx
+    .select({ id: businessMembers.id })
+    .from(businessMembers)
+    .where(eq(businessMembers.userId, userId))
+  const ids = memberships.map((row) => row.id)
+
+  const own = and(
+    eq(accounts.ownerType, 'user'),
+    eq(accounts.ownerId, userId),
+    sql`${accounts.kind} IN ('user_wallet', 'user_hold')`,
+  )!
+  if (ids.length === 0) return own
+
+  return or(own, and(eq(accounts.ownerType, 'membership'), inArray(accounts.ownerId, ids))!)!
+}
 
 /**
  * Find-or-create the canonical account for (owner, kind, currency).

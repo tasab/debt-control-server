@@ -6,6 +6,7 @@ import {
   businesses,
   ledgerEntries,
 } from '../../db/schema/index.ts'
+import { userAccountScope } from '../money/accounts.ts'
 import { walletsForUser } from '../money/balances.ts'
 import { valuationTable } from '../money/valuation.ts'
 import { claimBalances, liabilitiesOf } from './members.ts'
@@ -208,7 +209,13 @@ export async function summary(userId: string) {
   }
 }
 
-/** CSV export of the transaction history (§7). */
+/**
+ * CSV export of the transaction history (§7).
+ *
+ * Той самий перелік рухів, що й на екрані, тож і межа та сама: гаманець плюс
+ * борги бізнесів перед людиною. Інакше файл суперечив би тій виписці,
+ * з якої його завантажили.
+ */
 export async function exportCsv(userId: string): Promise<string> {
   const rows = await db
     .select({
@@ -217,10 +224,11 @@ export async function exportCsv(userId: string): Promise<string> {
       currency: ledgerEntries.currency,
       amount: ledgerEntries.amount,
       comment: ledgerEntries.comment,
+      accountKind: accounts.kind,
     })
     .from(ledgerEntries)
     .innerJoin(accounts, eq(accounts.id, ledgerEntries.accountId))
-    .where(and(eq(accounts.ownerType, 'user'), eq(accounts.ownerId, userId)))
+    .where(await userAccountScope(userId))
     .orderBy(ledgerEntries.createdAt)
 
   const escape = (value: unknown) => `"${String(value ?? '').replace(/"/g, '""')}"`
@@ -231,7 +239,8 @@ export async function exportCsv(userId: string): Promise<string> {
         row.createdAt.toISOString(),
         row.type,
         row.currency,
-        row.amount.toString(),
+        // Знак — як у виписці: вкладене в бізнес додатне.
+        (row.accountKind === 'member_claim' ? -row.amount : row.amount).toString(),
         escape(row.comment),
       ].join(','),
     )
