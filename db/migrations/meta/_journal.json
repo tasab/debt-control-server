@@ -36,6 +36,13 @@
       "when": 1793537316503,
       "tag": "0004_starting_capital_cancel",
       "breakpoints": true
+    },
+    {
+      "idx": 5,
+      "version": "7",
+      "when": 1793539434846,
+      "tag": "0005_starting_capital_comment",
+      "breakpoints": true
     }
   ]
 }

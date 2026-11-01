@@ -1,0 +1,1 @@
+ALTER TABLE "starting_capital" ADD COLUMN "comment" text;

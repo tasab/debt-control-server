@@ -111,7 +111,7 @@ export async function publicProfile(businessId: string) {
 
 export async function setStartingCapital(
   businessId: string,
-  { amount, currency }: { amount: string; currency: string },
+  { amount, currency, comment }: { amount: string; currency: string; comment?: string | null },
 ): Promise<StartingCapital> {
   const [row] = await db
     .insert(startingCapital)
@@ -120,6 +120,7 @@ export async function setStartingCapital(
       businessId,
       amount: parseAmount(amount),
       currency,
+      comment: comment || null,
     })
     .returning()
   return row
@@ -194,6 +195,7 @@ export async function startingCapitalHistory(
       at: row.effectiveFrom,
       amount: row.amount,
       currency: row.currency,
+      comment: row.comment,
       base: value,
       // Перше значення нічого не змінювало — його ставили з нуля.
       delta: previous ? value - previous.base : null,

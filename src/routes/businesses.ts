@@ -90,6 +90,7 @@ export default async function businessRoutes(fastify: FastifyInstance) {
         at: iso(edit.at),
         amount: money(edit.amount),
         currency: edit.currency,
+        comment: edit.comment ?? null,
         base: money(edit.base),
         delta: edit.delta == null ? null : money(edit.delta),
         cancelledAt: iso(edit.cancelledAt),

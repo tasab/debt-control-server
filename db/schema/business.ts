@@ -33,6 +33,7 @@ export const startingCapital = pgTable(
     amount: amount('amount').notNull(),
     currency: text('currency').notNull(),
     effectiveFrom: timestamp('effective_from', { withTimezone: true }).notNull().defaultNow(),
+    comment: text('comment'),
     // Помилкова правка не стирається, а позначається скасованою: тоді діє
     // попередній рядок, а в історії «Мого капіталу» видно і правку, і відкат.
     cancelledAt: timestamp('cancelled_at', { withTimezone: true }),

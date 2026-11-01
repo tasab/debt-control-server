@@ -13,6 +13,8 @@ export const createBusinessSchema = z.object({
 export const startingCapitalSchema = z.object({
   amount: amountString,
   currency: currencyCode,
+  // Навіщо правили — видно в історії «Мого капіталу».
+  comment: z.string().trim().max(280).optional(),
 })
 
 export const registerSchema = z.object({
