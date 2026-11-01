@@ -78,6 +78,38 @@ export default async function businessRoutes(fastify: FastifyInstance) {
     return { amount: money(row.amount), currency: row.currency, effectiveFrom: iso(row.effectiveFrom) }
   })
 
+  // Правки «Мого капіталу» — в історії поруч із внесками й вилученнями.
+  fastify.get('/businesses/me/starting-capital/history', { preHandler: borrower }, async (request) => {
+    const business = await domain.businessOf(request.user.id)
+    const query = dashboardQuerySchema.parse(request.query)
+    const data = await domain.startingCapitalHistory(business.id, { in: query.in })
+    return {
+      baseCurrency: data.baseCurrency,
+      edits: data.edits.map((edit) => ({
+        id: edit.id,
+        at: iso(edit.at),
+        amount: money(edit.amount),
+        currency: edit.currency,
+        base: money(edit.base),
+        delta: edit.delta == null ? null : money(edit.delta),
+        cancelledAt: iso(edit.cancelledAt),
+        canCancel: edit.canCancel,
+      })),
+    }
+  })
+
+  // Відкат помилкової правки: рядок лишається в історії скасованим, а діє
+  // знову попереднє значення.
+  fastify.post<IdParams>(
+    '/businesses/me/starting-capital/:id/cancel',
+    { preHandler: borrower },
+    async (request) => {
+      const business = await domain.businessOf(request.user.id)
+      const row = await domain.cancelStartingCapital(business.id, request.params.id, request.user.id)
+      return { id: row.id, cancelledAt: iso(row.cancelledAt) }
+    },
+  )
+
   fastify.get('/businesses/me/dashboard', { preHandler: borrower }, async (request) => {
     const business = await domain.businessOf(request.user.id)
     const query = dashboardQuerySchema.parse(request.query)

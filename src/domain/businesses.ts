@@ -136,11 +136,117 @@ export async function currentStartingCapital(
       and(
         eq(startingCapital.businessId, businessId),
         sql`${startingCapital.effectiveFrom} <= now()`,
+        isNull(startingCapital.cancelledAt),
       ),
     )
     .orderBy(sql`${startingCapital.effectiveFrom} DESC`)
     .limit(1)
   return row ?? null
+}
+
+/**
+ * Правки «Мого капіталу» — для історії поруч із внесками й вилученнями.
+ *
+ * Кожна правка — це новий стартовий рядок, а внески й вилучення стоять
+ * поруч незмінні, тож на скільки зрушився капітал на картці — рівно на
+ * скільки зрушився старт: різниця з рядком, що діяв у момент правки. Обидва
+ * за курсом на свій день, як їх рахує дашборд, тому числа в історії
+ * сходяться з тим, що людина бачила на картці до й після.
+ *
+ * Скасувати можна лише ту правку, що діє зараз, і лише коли є до чого
+ * повертатися: скасування першого значення лишило б бізнес без старту.
+ */
+export async function startingCapitalHistory(
+  businessId: string,
+  { in: target }: { in?: string | null } = {},
+) {
+  const { convert, base, pivot, exponent } = await valuationTable(target)
+  const rows = await db
+    .select()
+    .from(startingCapital)
+    .where(
+      and(
+        eq(startingCapital.businessId, businessId),
+        sql`${startingCapital.effectiveFrom} <= now()`,
+      ),
+    )
+    .orderBy(startingCapital.effectiveFrom)
+
+  const valued = await Promise.all(
+    rows.map(async (row) => ({
+      row,
+      base: convert(await startingAtCost(row, exponent), pivot, base),
+    })),
+  )
+  const current = [...valued].reverse().find(({ row }) => !row.cancelledAt) ?? null
+  const activeCount = valued.filter(({ row }) => !row.cancelledAt).length
+
+  const edits = valued.map(({ row, base: value }, index) => {
+    // Що діяло в момент правки: найпізніший раніший рядок, який тоді ще не
+    // був скасований.
+    const previous = valued
+      .slice(0, index)
+      .reverse()
+      .find(({ row: earlier }) => !earlier.cancelledAt || earlier.cancelledAt > row.effectiveFrom)
+    const isCurrent = current?.row.id === row.id
+    return {
+      id: row.id,
+      at: row.effectiveFrom,
+      amount: row.amount,
+      currency: row.currency,
+      base: value,
+      // Перше значення нічого не змінювало — його ставили з нуля.
+      delta: previous ? value - previous.base : null,
+      cancelledAt: row.cancelledAt,
+      canCancel: isCurrent && activeCount > 1,
+    }
+  })
+
+  return { baseCurrency: base, edits: edits.reverse() }
+}
+
+/** Скасувати останню правку «Мого капіталу» — знову діє попереднє значення. */
+export async function cancelStartingCapital(businessId: string, id: string, userId: string) {
+  return db.transaction(async (tx) => {
+    // Дві вкладки, що скасовують одночасно, не мають відкотити дві правки
+    // замість однієї: рядок бізнесу серіалізує їх.
+    await tx.execute(sql`SELECT 1 FROM businesses WHERE id = ${businessId} FOR UPDATE`)
+
+    const [row] = await tx
+      .select()
+      .from(startingCapital)
+      .where(and(eq(startingCapital.id, id), eq(startingCapital.businessId, businessId)))
+      .limit(1)
+    if (!row) throw errors.notFound('Правку капіталу')
+    if (row.cancelledAt) throw errors.conflict('ALREADY_CANCELLED', 'Цю правку вже скасовано')
+
+    const current = await currentStartingCapital(businessId, tx)
+    if (current?.id !== row.id) {
+      throw errors.conflict('NOT_LATEST', 'Скасувати можна лише останню правку капіталу')
+    }
+
+    const [previous] = await tx
+      .select({ id: startingCapital.id })
+      .from(startingCapital)
+      .where(
+        and(
+          eq(startingCapital.businessId, businessId),
+          isNull(startingCapital.cancelledAt),
+          sql`${startingCapital.id} <> ${row.id}`,
+        ),
+      )
+      .limit(1)
+    if (!previous) {
+      throw errors.conflict('NOTHING_TO_RESTORE', 'Це перше значення капіталу — повертатися нема до чого')
+    }
+
+    const [cancelled] = await tx
+      .update(startingCapital)
+      .set({ cancelledAt: new Date(), cancelledBy: userId })
+      .where(eq(startingCapital.id, row.id))
+      .returning()
+    return cancelled
+  })
 }
 
 // ─── Registers (каси) ───────────────────────────────────────────────────────
